@@ -2,6 +2,7 @@ from fastapi import FastAPI, Query
 
 from app.config import settings
 from app.search import search_attractions
+from app.recommendations import recommend_attractions
 
 
 app = FastAPI(
@@ -18,8 +19,14 @@ def health_check() -> dict[str, str]:
 
 
 @app.get("/attractions/search")
-def attraction_search(
-    query: str = Query(min_length=3),
-) -> dict:
+def attraction_search(query: str = Query(min_length=3),) -> dict:
     """Search the web for travel attractions."""
     return search_attractions(query)
+
+
+@app.get("/attractions/recommend")
+async def attraction_recommendations(
+    query: str = Query(min_length=3),
+) -> dict:
+    """Generate attraction recommendations based on web search."""
+    return await recommend_attractions(query)
