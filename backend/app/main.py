@@ -1,7 +1,7 @@
-
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 
 from app.config import settings
+from app.search import search_attractions
 
 
 app = FastAPI(
@@ -15,3 +15,11 @@ app = FastAPI(
 def health_check() -> dict[str, str]:
     """Check whether the backend is running."""
     return {"status": "ok"}
+
+
+@app.get("/attractions/search")
+def attraction_search(
+    query: str = Query(min_length=3),
+) -> dict:
+    """Search the web for travel attractions."""
+    return search_attractions(query)
