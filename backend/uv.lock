@@ -24,6 +24,7 @@ dependencies = [
     { name = "langchain-openai" },
     { name = "langchain-tavily" },
     { name = "openai" },
+    { name = "pydantic" },
     { name = "pydantic-settings" },
 ]
 
@@ -33,6 +34,7 @@ requires-dist = [
     { name = "langchain-openai", specifier = ">=1.7.2" },
     { name = "langchain-tavily", specifier = ">=0.2.18" },
     { name = "openai", specifier = ">=3.35.1" },
+    { name = "pydantic", specifier = ">=2.14.1" },
     { name = "pydantic-settings", specifier = ">=2.16.0" },
 ]
 

@@ -1,19 +1,22 @@
 
 import asyncio
+import json
 
 from app.llm import generate_text
 from app.search import search_attractions
+from app.schemas import AttractionRecommendations
+from pydantic import ValidationError
 
 
 async def recommend_attractions(query: str) -> dict:
-    """Find attractions online and generate source-grounded recommendations."""
+    """Find attractions online and generate validated recommendations."""
     search_data = await asyncio.to_thread(search_attractions, query)
     results = search_data.get("results", [])
 
     if not results:
         return {
             "query": query,
-            "recommendations": "No relevant search results were found.",
+            "recommendations": [],
             "sources": [],
         }
 
@@ -34,27 +37,56 @@ async def recommend_attractions(query: str) -> dict:
     )
 
     prompt = f"""
-You are a travel planning assistant that uses information from web sources.
+You are a travel planning assistant.
 
 User request: {query}
 
-Use the following sources to recommend relevant attractions:
+Use only the following web sources:
 {source_text}
+
+Return a JSON object with this exact structure:
+{{
+  "recommendations": [
+    {{
+      "name": "Attraction name",
+      "description": "Description supported by the sources",
+      "relevance_reason": "Why it matches the user's request",
+      "source_indices": [1]
+    }}
+  ]
+}}
 
 Requirements:
 - Answer in English.
-- Recommend up to 5 relevant attractions and briefly explain why each is worth considering.
-- Base your recommendations only on the provided sources. Do not invent missing details.
-- Cite the relevant source number next to each recommendation, for example [1].
-- Explicitly mention when the available information is insufficient to determine a detail.
-- Do not provide prices, opening hours, or travel times unless they appear in the sources.
+- Recommend up to 5 relevant attractions.
+- Use only facts supported by the provided sources.
+- source_indices must contain the one-based indices of sources that directly support the recommendation.
+- Do not invent details, prices, opening hours, or travel times.
+- Return valid JSON only, without Markdown fences.
 """
 
-    recommendations = await generate_text(prompt)
+    response_text = await generate_text(prompt)
+
+    try:
+        parsed = AttractionRecommendations.model_validate(
+            json.loads(response_text)
+        )
+    except (json.JSONDecodeError, ValidationError) as exc:
+        raise ValueError(
+            "The model returned an invalid recommendation response."
+        ) from exc
+
+    valid_indices = set(range(1, len(sources) + 1))
+
+    for recommendation in parsed.recommendations:
+        if any(index not in valid_indices for index in recommendation.source_indices):
+            raise ValueError(
+                "The model referenced a source index that does not exist."
+            )
 
     return {
         "query": query,
-        "recommendations": recommendations,
+        "recommendations": parsed.model_dump()["recommendations"],
         "sources": [
             {"title": source["title"], "url": source["url"]}
             for source in sources
