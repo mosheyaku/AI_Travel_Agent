@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, HTTPException
 
 from app.config import settings
 from app.search import search_attractions
@@ -29,4 +29,10 @@ async def attraction_recommendations(
     query: str = Query(min_length=3),
 ) -> dict:
     """Generate attraction recommendations based on web search."""
-    return await recommend_attractions(query)
+    try:
+        return await recommend_attractions(query)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="The recommendation service returned an invalid response.",
+        ) from exc

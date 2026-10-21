@@ -58,3 +58,48 @@ async def test_rejects_nonexistent_source_index(monkeypatch):
 
     with pytest.raises(ValueError, match="source index"):
         await recommendations.recommend_attractions("temples in Kyoto")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "model_response",
+    [
+        "This is not valid JSON",
+        json.dumps(
+            {
+                "recommendations": [
+                    {
+                        "name": "Kyoto Temple",
+                        "category": "temples",
+                        "description": "A historical temple.",
+                        "relevance_reason": "Matches the request.",
+                        "source_indices": [1],
+                    }
+                ]
+            }
+        ),
+    ],
+)
+async def test_rejects_invalid_model_response(monkeypatch, model_response):
+    def fake_search(query: str) -> dict:
+        return {
+            "results": [
+                {
+                    "title": "Kyoto Travel Guide",
+                    "url": "https://example.com/kyoto",
+                    "content": "A guide to temples in Kyoto.",
+                }
+            ]
+        }
+
+    async def fake_generate_text(prompt: str) -> str:
+        return model_response
+
+    monkeypatch.setattr(recommendations, "search_attractions", fake_search)
+    monkeypatch.setattr(recommendations, "generate_text", fake_generate_text)
+
+    with pytest.raises(
+        ValueError,
+        match="invalid recommendation response",
+    ):
+        await recommendations.recommend_attractions("temples in Kyoto")
