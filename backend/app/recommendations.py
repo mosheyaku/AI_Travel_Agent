@@ -49,6 +49,7 @@ Return a JSON object with this exact structure:
   "recommendations": [
     {{
       "name": "Attraction name",
+      "category": "adventure",
       "description": "Description supported by the sources",
       "relevance_reason": "Why it matches the user's request",
       "source_indices": [1]
@@ -56,13 +57,34 @@ Return a JSON object with this exact structure:
   ]
 }}
 
+
+
 Requirements:
 - Answer in English.
 - Recommend up to 5 relevant attractions.
+- Prioritize attractions that directly match the user's requested activities and interests.
+- Only recommend attractions in the requested destination or a reasonably nearby area.
+- Do not include attractions elsewhere in the country just because they match the activity type.
+- Classify each attraction according to the activity it actually offers, not merely the user's interest.
+- Do not label wildlife encounters or ordinary sightseeing as adventure activities unless the source describes a relevant adventure activity.
+- Exclude attractions when the sources do not provide enough evidence that they match the destination and request.
 - Use only facts supported by the provided sources.
 - source_indices must contain the one-based indices of sources that directly support the recommendation.
-- Do not invent details, prices, opening hours, or travel times.
-- Return valid JSON only, without Markdown fences.
+- Do not invent details, prices, opening hours, distances, or travel times.
+- Do not recommend unrelated attractions just to fill the list.
+
+Category rules:
+- Use only these exact category values: adventure, nature, culture, food, wildlife, relaxation, other.
+- Temples, shrines, historical sites, museums, and traditional architecture belong to culture.
+- Hiking, waterfalls, caves, and scenic natural areas belong to nature, unless the main activity is an adventure sport.
+- Animal encounters and wildlife observation belong to wildlife, unless another activity is clearly the main focus.
+- Restaurants, food markets, and cooking classes belong to food.
+- Beaches, spas, and leisure activities focused on rest belong to relaxation.
+- If no category fits, use other.
+- Never use attraction names or activity types as category values.
+- Every recommendation must include a valid category.
+
+Return valid JSON only, without Markdown fences.
 """
 
     response_text = await generate_text(prompt)
