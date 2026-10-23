@@ -3,6 +3,8 @@ from fastapi import FastAPI, Query, HTTPException
 from app.config import settings
 from app.search import search_attractions
 from app.recommendations import recommend_attractions
+from app.schemas import TravelPreferences
+from app.trip_planning import build_attraction_query
 
 
 app = FastAPI(
@@ -29,6 +31,30 @@ async def attraction_recommendations(
     query: str = Query(min_length=3),
 ) -> dict:
     """Generate attraction recommendations based on web search."""
+    try:
+        return await recommend_attractions(query)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="The recommendation service returned an invalid response.",
+        ) from exc
+
+
+@app.post("/trips/preferences")
+def create_travel_preferences(
+    preferences: TravelPreferences,
+) -> TravelPreferences:
+    """Validate and return travel preferences."""
+    return preferences
+
+
+@app.post("/trips/attractions")
+async def trip_attractions(
+    preferences: TravelPreferences,
+) -> dict:
+    """Recommend attractions based on travel preferences."""
+    query = build_attraction_query(preferences)
+
     try:
         return await recommend_attractions(query)
     except ValueError as exc:
