@@ -43,3 +43,11 @@ class AttractionRecommendations(BaseModel):
             raise ValueError("Duplicate attraction names are not allowed.")
 
         return self
+
+
+class TravelPreferences(BaseModel):
+    destination: str = Field(min_length=2)
+    duration_days: int = Field(ge=1, le=30)
+    budget: float | None = Field(default=None, gt=0)
+    interests: list[AttractionCategory] = Field(min_length=1)
+    pace: Literal["relaxed", "balanced", "active"] = "balanced"
