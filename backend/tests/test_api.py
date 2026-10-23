@@ -26,3 +26,32 @@ def test_recommendation_error_returns_502(monkeypatch):
     assert response.json() == {
         "detail": "The recommendation service returned an invalid response."
     }
+
+
+def test_accepts_valid_travel_preferences():
+    response = client.post(
+        "/trips/preferences",
+        json={
+            "destination": "Thailand",
+            "duration_days": 14,
+            "interests": ["adventure", "nature"],
+            "pace": "active",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["destination"] == "Thailand"
+    assert response.json()["pace"] == "active"
+
+
+def test_rejects_invalid_travel_preferences():
+    response = client.post(
+        "/trips/preferences",
+        json={
+            "destination": "Thailand",
+            "duration_days": 0,
+            "interests": ["adventure"],
+        },
+    )
+
+    assert response.status_code == 422
