@@ -1,10 +1,9 @@
-
 import asyncio
 import json
 
 from app.llm import generate_text
 from app.search import search_attractions
-from app.schemas import AttractionRecommendations
+from app.schemas import AttractionRecommendation, AttractionRecommendations
 from pydantic import ValidationError
 
 
@@ -57,8 +56,6 @@ Return a JSON object with this exact structure:
   ]
 }}
 
-
-
 Requirements:
 - Answer in English.
 - Recommend up to 5 relevant attractions.
@@ -87,24 +84,70 @@ Category rules:
 Return valid JSON only, without Markdown fences.
 """
 
-    response_text = await generate_text(prompt)
-
-    try:
-        parsed = AttractionRecommendations.model_validate(
-            json.loads(response_text)
-        )
-    except (json.JSONDecodeError, ValidationError) as exc:
-        raise ValueError(
-            "The model returned an invalid recommendation response."
-        ) from exc
 
     valid_indices = set(range(1, len(sources) + 1))
 
-    for recommendation in parsed.recommendations:
-        if any(index not in valid_indices for index in recommendation.source_indices):
-            raise ValueError(
-                "The model referenced a source index that does not exist."
-            )
+    for attempt in range(2):
+        response_text = await generate_text(prompt)
+
+        try:
+            response_data = json.loads(response_text)
+            raw_recommendations = response_data["recommendations"]
+
+            if not isinstance(raw_recommendations, list):
+                raise ValueError("Recommendations must be a list.")
+
+            valid_recommendations = []
+            seen_names = set()
+
+            for item in raw_recommendations:
+                try:
+                    recommendation = AttractionRecommendation.model_validate(item)
+                except ValidationError:
+                    continue
+
+                if any(
+                    index not in valid_indices
+                    for index in recommendation.source_indices
+                ):
+                    continue
+
+                normalized_name = recommendation.name.strip().casefold()
+
+                if normalized_name in seen_names:
+                    continue
+
+                seen_names.add(normalized_name)
+                valid_recommendations.append(recommendation)
+
+                if len(valid_recommendations) == 5:
+                    break
+
+            if valid_recommendations:
+                parsed = AttractionRecommendations(
+                    recommendations=valid_recommendations
+                )
+                break
+
+            raise ValueError("No valid recommendations were returned.")
+
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            if attempt == 1:
+                raise ValueError(
+                    "The model returned no valid recommendations after retry."
+                ) from exc
+
+            prompt += f"""
+
+Your previous response contained no usable recommendations.
+
+Validation error: {exc}
+
+Available source indices: {sorted(valid_indices)}
+
+Return valid JSON with recommendations supported by these sources.
+Do not invent source indices.
+"""
 
     return {
         "query": query,
