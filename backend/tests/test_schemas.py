@@ -2,7 +2,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.schemas import AttractionRecommendations, TravelPreferences
+from app.schemas import AttractionRecommendations, TravelPreferences, TravelItinerary
 
 
 def make_recommendation(name: str, category: str = "culture") -> dict:
@@ -92,3 +92,27 @@ def test_rejects_invalid_interest():
             duration_days=14,
             interests=["shopping"],
         )
+
+
+def test_accepts_valid_itinerary():
+    itinerary = TravelItinerary.model_validate(
+        {
+            "destination": "Chiang Mai, Thailand",
+            "days": [
+                {
+                    "day": 1,
+                    "activities": [
+                        {
+                            "name": "Skyline Adventure",
+                            "description": "Ziplining through the jungle.",
+                            "source_indices": [1],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert itinerary.destination == "Chiang Mai, Thailand"
+    assert itinerary.days[0].day == 1
+    assert itinerary.days[0].activities[0].name == "Skyline Adventure"

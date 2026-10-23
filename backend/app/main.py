@@ -5,7 +5,7 @@ from app.search import search_attractions
 from app.recommendations import recommend_attractions
 from app.schemas import TravelPreferences
 from app.trip_planning import build_attraction_query
-
+from app.trip_generator import generate_trip_plan
 
 app = FastAPI(
     title=settings.app_name,
@@ -62,3 +62,30 @@ async def trip_attractions(
             status_code=502,
             detail="The recommendation service returned an invalid response.",
         ) from exc
+
+
+@app.post("/trips/generate")
+async def generate_trip(
+    preferences: TravelPreferences,
+) -> dict:
+    """Generate a trip plan based on travel preferences."""
+    query = build_attraction_query(preferences)
+
+    try:
+        attraction_data = await recommend_attractions(query)
+
+        trip_plan = await generate_trip_plan(
+            preferences,
+            attraction_data["recommendations"],
+        )
+
+        return {
+            "trip": trip_plan.model_dump(),
+            "sources": attraction_data["sources"],
+        }
+    except ValueError as exc:
+        print(f"Trip generation error: {exc!r}")
+        raise HTTPException(
+        status_code=502,
+        detail="The trip planning service returned an invalid response.",
+    ) from exc

@@ -51,3 +51,19 @@ class TravelPreferences(BaseModel):
     budget: float | None = Field(default=None, gt=0)
     interests: list[AttractionCategory] = Field(min_length=1)
     pace: Literal["relaxed", "balanced", "active"] = "balanced"
+
+
+class ItineraryActivity(BaseModel):
+    name: str = Field(min_length=1)
+    description: str
+    source_indices: list[int] = Field(min_length=1)
+
+
+class ItineraryDay(BaseModel):
+    day: int = Field(ge=1)
+    activities: list[ItineraryActivity]
+
+
+class TravelItinerary(BaseModel):
+    destination: str
+    days: list[ItineraryDay]
