@@ -2,7 +2,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.schemas import AttractionRecommendations
+from app.schemas import AttractionRecommendations, TravelPreferences
 
 
 def make_recommendation(name: str, category: str = "culture") -> dict:
@@ -61,3 +61,34 @@ def test_rejects_more_than_five_recommendations():
 
     with pytest.raises(ValidationError):
         AttractionRecommendations.model_validate(data)
+
+
+def test_accepts_valid_travel_preferences():
+    preferences = TravelPreferences(
+        destination="Thailand",
+        duration_days=14,
+        interests=["adventure", "nature"],
+        pace="active",
+    )
+
+    assert preferences.destination == "Thailand"
+    assert preferences.duration_days == 14
+    assert preferences.budget is None
+
+
+def test_rejects_invalid_trip_duration():
+    with pytest.raises(ValidationError):
+        TravelPreferences(
+            destination="Thailand",
+            duration_days=0,
+            interests=["adventure"],
+        )
+
+
+def test_rejects_invalid_interest():
+    with pytest.raises(ValidationError):
+        TravelPreferences(
+            destination="Thailand",
+            duration_days=14,
+            interests=["shopping"],
+        )
