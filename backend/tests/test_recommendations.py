@@ -56,7 +56,7 @@ async def test_rejects_nonexistent_source_index(monkeypatch):
     monkeypatch.setattr(recommendations, "search_attractions", fake_search)
     monkeypatch.setattr(recommendations, "generate_text", fake_generate_text)
 
-    with pytest.raises(ValueError, match="source index"):
+    with pytest.raises(ValueError, match="no valid recommendations after retry"):
         await recommendations.recommend_attractions("temples in Kyoto")
 
 
@@ -100,6 +100,101 @@ async def test_rejects_invalid_model_response(monkeypatch, model_response):
 
     with pytest.raises(
         ValueError,
-        match="invalid recommendation response",
+        match="no valid recommendations after retry",
     ):
         await recommendations.recommend_attractions("temples in Kyoto")
+
+
+@pytest.mark.anyio
+async def test_retries_after_invalid_source_index(monkeypatch):
+    def fake_search(query: str) -> dict:
+        return {
+            "results": [
+                {
+                    "title": "Chiang Mai Travel Guide",
+                    "url": "https://example.com/chiang-mai",
+                    "content": "Skyline Adventure offers ziplining.",
+                }
+            ]
+        }
+
+    call_count = 0
+
+    async def fake_generate_text(prompt: str) -> str:
+        nonlocal call_count
+        call_count += 1
+
+        source_index = 99 if call_count == 1 else 1
+
+        return json.dumps(
+            {
+                "recommendations": [
+                    {
+                        "name": "Skyline Adventure",
+                        "category": "adventure",
+                        "description": "Ziplining through the jungle.",
+                        "relevance_reason": "Matches the user's interests.",
+                        "source_indices": [source_index],
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr(recommendations, "search_attractions", fake_search)
+    monkeypatch.setattr(recommendations, "generate_text", fake_generate_text)
+
+    result = await recommendations.recommend_attractions(
+        "adventure activities in Chiang Mai"
+    )
+
+    assert call_count == 2
+    assert result["recommendations"][0]["name"] == "Skyline Adventure"
+    assert result["recommendations"][0]["source_indices"] == [1]
+
+
+
+@pytest.mark.anyio
+async def test_keeps_valid_recommendations_when_some_are_invalid(monkeypatch):
+    def fake_search(query: str) -> dict:
+        return {
+            "results": [
+                {
+                    "title": "Chiang Mai Guide",
+                    "url": "https://example.com/chiang-mai",
+                    "content": "Skyline Adventure offers ziplining.",
+                }
+            ]
+        }
+
+    async def fake_generate_text(prompt: str) -> str:
+        return json.dumps(
+            {
+                "recommendations": [
+                    {
+                        "name": "Skyline Adventure",
+                        "category": "adventure",
+                        "description": "Ziplining through the jungle.",
+                        "relevance_reason": "Matches adventure interests.",
+                        "source_indices": [1],
+                    },
+                    {
+                        "name": "Unknown Attraction",
+                        "category": "adventure",
+                        "description": "An unsupported attraction.",
+                        "relevance_reason": "Matches adventure interests.",
+                        "source_indices": [99],
+                    },
+                ]
+            }
+        )
+
+    monkeypatch.setattr(recommendations, "search_attractions", fake_search)
+    monkeypatch.setattr(recommendations, "generate_text", fake_generate_text)
+
+    result = await recommendations.recommend_attractions(
+        "adventure activities in Chiang Mai"
+    )
+
+    assert len(result["recommendations"]) == 1
+    assert result["recommendations"][0]["name"] == "Skyline Adventure"
+    assert result["recommendations"][0]["source_indices"] == [1]
