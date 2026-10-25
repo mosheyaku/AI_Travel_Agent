@@ -1,44 +1,67 @@
 import asyncio
 import json
-
-from app.llm import generate_text
-from app.search import search_attractions
-from app.schemas import AttractionRecommendation, AttractionRecommendations
 from pydantic import ValidationError
 
+from app.llm import generate_text
+from app.schemas import AttractionRecommendation, AttractionRecommendations
+from app.search import search_attractions
 
-async def recommend_attractions(query: str) -> dict:
-    """Find attractions online and generate validated recommendations."""
-    search_data = await asyncio.to_thread(search_attractions, query)
-    results = search_data.get("results", [])
 
-    if not results:
-        return {
-            "query": query,
-            "recommendations": [],
-            "sources": [],
-        }
+async def recommend_attractions(query: str | list[str]) -> dict:
+    """Find and validate attraction recommendations for each search query."""
+    queries = [query] if isinstance(query, str) else query
 
-    sources = [
-        {
-            "title": result["title"],
-            "url": result["url"],
-            "content": result["content"],
-        }
-        for result in results
-    ]
-
-    source_text = "\n\n".join(
-        f"[{i}] {source['title']}\n"
-        f"URL: {source['url']}\n"
-        f"Content: {source['content']}"
-        for i, source in enumerate(sources, start=1)
+    search_responses = await asyncio.gather(
+        *[
+            asyncio.to_thread(search_attractions, item)
+            for item in queries
+        ]
     )
 
-    prompt = f"""
+    sources = []
+    seen_urls = set()
+    recommendations = []
+    seen_names = set()
+
+    for search_query, response in zip(queries, search_responses):
+        query_sources = []
+
+        for result in response.get("results", []):
+            url = result.get("url")
+
+            if not url:
+                continue
+
+            if url not in seen_urls:
+                seen_urls.add(url)
+                sources.append({
+                    "title": result["title"],
+                    "url": url,
+                    "content": result["content"],
+                })
+
+            source_index = next(
+                i
+                for i, source in enumerate(sources, start=1)
+                if source["url"] == url
+            )
+
+            query_sources.append((source_index, result))
+
+        if not query_sources:
+            continue
+
+        source_text = "\n\n".join(
+            f"[{index}] {result['title']}\n"
+            f"URL: {result['url']}\n"
+            f"Content: {result['content']}"
+            for index, result in query_sources
+        )
+
+        prompt = f"""
 You are a travel planning assistant.
 
-User request: {query}
+User request: {search_query}
 
 Use only the following web sources:
 {source_text}
@@ -58,96 +81,100 @@ Return a JSON object with this exact structure:
 
 Requirements:
 - Answer in English.
-- Recommend up to 5 relevant attractions.
-- Prioritize attractions that directly match the user's requested activities and interests.
-- Only recommend attractions in the requested destination or a reasonably nearby area.
-- Do not include attractions elsewhere in the country just because they match the activity type.
-- Classify each attraction according to the activity it actually offers, not merely the user's interest.
-- Do not label wildlife encounters or ordinary sightseeing as adventure activities unless the source describes a relevant adventure activity.
-- Exclude attractions when the sources do not provide enough evidence that they match the destination and request.
+- Return up to 5 distinct attraction recommendations.
+- Do not invent attractions.
+- Prioritize attractions matching the specific user request.
+- Only recommend attractions in the requested destination or nearby area.
+- Do not include attractions elsewhere in the country.
 - Use only facts supported by the provided sources.
-- source_indices must contain the one-based indices of sources that directly support the recommendation.
+- source_indices must reference the source numbers shown above.
 - Do not invent details, prices, opening hours, distances, or travel times.
-- Do not recommend unrelated attractions just to fill the list.
-
-Category rules:
-- Use only these exact category values: adventure, nature, culture, food, wildlife, relaxation, other.
-- Temples, shrines, historical sites, museums, and traditional architecture belong to culture.
-- Hiking, waterfalls, caves, and scenic natural areas belong to nature, unless the main activity is an adventure sport.
-- Animal encounters and wildlife observation belong to wildlife, unless another activity is clearly the main focus.
-- Restaurants, food markets, and cooking classes belong to food.
-- Beaches, spas, and leisure activities focused on rest belong to relaxation.
-- If no category fits, use other.
-- Never use attraction names or activity types as category values.
-- Every recommendation must include a valid category.
-
-Return valid JSON only, without Markdown fences.
+- Use only these categories: adventure, nature, culture, food, wildlife, relaxation, other.
+- Classify attractions by their actual activity, not the user's requested category.
+- Temples and historical sites belong to culture.
+- Hiking, waterfalls, and scenic areas belong to nature.
+- Animal encounters belong to wildlife.
+- Return valid JSON only, without Markdown fences.
 """
 
+        valid_indices = {index for index, _ in query_sources}
 
-    valid_indices = set(range(1, len(sources) + 1))
+        for attempt in range(2):
+            response_text = await generate_text(prompt)
 
-    for attempt in range(2):
-        response_text = await generate_text(prompt)
+            print(f"LLM response for '{search_query}', attempt {attempt + 1}: "
+            f"{response_text!r}",
+            flush=True,
+)
 
-        try:
-            response_data = json.loads(response_text)
-            raw_recommendations = response_data["recommendations"]
+            try:
+                response_data = json.loads(response_text)
+                raw_recommendations = response_data["recommendations"]
 
-            if not isinstance(raw_recommendations, list):
-                raise ValueError("Recommendations must be a list.")
+                if not isinstance(raw_recommendations, list):
+                    raise ValueError("Recommendations must be a list.")
 
-            valid_recommendations = []
-            seen_names = set()
+                valid_recommendations = []
 
-            for item in raw_recommendations:
-                try:
-                    recommendation = AttractionRecommendation.model_validate(item)
-                except ValidationError:
-                    continue
+                for item in raw_recommendations:
+                    try:
+                        recommendation = AttractionRecommendation.model_validate(item)
+                    except ValidationError:
+                        continue
 
-                if any(
-                    index not in valid_indices
-                    for index in recommendation.source_indices
-                ):
-                    continue
+                    if any(
+                        index not in valid_indices
+                        for index in recommendation.source_indices
+                    ):
+                        continue
 
-                normalized_name = recommendation.name.strip().casefold()
+                    name = recommendation.name.strip().casefold()
 
-                if normalized_name in seen_names:
-                    continue
+                    if name in seen_names:
+                        continue
 
-                seen_names.add(normalized_name)
-                valid_recommendations.append(recommendation)
+                    valid_recommendations.append(recommendation)
 
-                if len(valid_recommendations) == 5:
+                    if len(valid_recommendations) == 5:
+                        break
+
+                if valid_recommendations:
+                    for recommendation in valid_recommendations:
+                        name = recommendation.name.strip().casefold()
+                        seen_names.add(name)
+                        recommendations.append(recommendation)
+
                     break
 
-            if valid_recommendations:
-                parsed = AttractionRecommendations(
-                    recommendations=valid_recommendations
-                )
-                break
+                raise ValueError("No valid recommendations were returned.")
 
-            raise ValueError("No valid recommendations were returned.")
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                print(f"Recommendation failed for '{search_query}', "
+                f"attempt {attempt + 1}: {exc!r}",flush=True,)
 
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
-            if attempt == 1:
-                raise ValueError(
-                    "The model returned no valid recommendations after retry."
-                ) from exc
+                prompt += f"""
 
-            prompt += f"""
-
-Your previous response contained no usable recommendations.
+Your previous response contained no valid recommendations.
 
 Validation error: {exc}
-
 Available source indices: {sorted(valid_indices)}
 
-Return valid JSON with recommendations supported by these sources.
-Do not invent source indices.
+Return valid JSON using only these source indices.
 """
+
+    print(f"Total valid recommendations: {len(recommendations)}",flush=True,)
+
+    if sources and not recommendations:
+        raise ValueError("The model returned no valid recommendations after retry.")
+    
+    print(f"Total valid recommendations: {len(recommendations)}", flush=True)
+
+    parsed = AttractionRecommendations(
+        recommendations=recommendations[:15]
+    )
+
+    print("Recommendations schema validation passed", flush=True)
+
 
     return {
         "query": query,
