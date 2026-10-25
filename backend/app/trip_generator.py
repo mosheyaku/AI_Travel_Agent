@@ -29,14 +29,23 @@ Available attractions:
 Requirements:
 - Use only attractions from the provided list.
 - Do not invent new attractions.
+- Preserve attraction names exactly as provided.
 - Do not repeat the same attraction on multiple days.
+- Prioritize attractions that match the user's interests.
+- Include a variety of activities across the requested interests.
+- Avoid selecting multiple attractions that offer essentially the same experience.
+- Do not schedule multiple elephant sanctuary visits unless explicitly requested.
+- Do not schedule two full-day or long guided tours on the same day.
+- Prefer 1-2 substantial activities per day for a relaxed pace.
+- Prefer 2-3 activities per day for a balanced pace.
+- Prefer 3-4 activities per day for an active pace, only when realistically feasible.
+- A full-day activity may occupy an entire day regardless of pace.
 - Distribute activities across the requested number of days.
-- Adjust the number of activities per day to the travel pace.
-- Do not invent travel times, distances, opening hours, or prices.
+- Do not invent travel times, distances, opening hours, durations, or prices.
 - Keep source_indices exactly as provided for each attraction.
 - Return exactly {preferences.duration_days} days.
 - Number days sequentially starting from 1.
-- If there are too few attractions, leave some days with empty activities.
+- If there are too few suitable attractions, leave some days with fewer or no activities.
 - Return valid JSON only, without Markdown fences.
 
 JSON structure:
