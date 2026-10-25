@@ -29,7 +29,7 @@ class AttractionRecommendation(BaseModel):
 
 class AttractionRecommendations(BaseModel):
     recommendations: list[AttractionRecommendation] = Field(
-        max_length=5,
+        max_length=15,
     )
 
     @model_validator(mode="after")

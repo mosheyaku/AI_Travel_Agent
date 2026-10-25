@@ -51,11 +51,11 @@ def test_rejects_duplicate_names():
         AttractionRecommendations.model_validate(data)
 
 
-def test_rejects_more_than_five_recommendations():
+def test_rejects_more_than_fifteen_recommendations():
     data = {
         "recommendations": [
             make_recommendation(f"Attraction {index}")
-            for index in range(6)
+            for index in range(16)
         ]
     }
 
