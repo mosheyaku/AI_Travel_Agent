@@ -5,6 +5,7 @@ from pydantic import ValidationError
 from app.llm import generate_text
 from app.schemas import AttractionRecommendation, AttractionRecommendations
 from app.search import search_attractions
+from app.deduplication import deduplicate_attractions
 
 
 async def recommend_attractions(query: str | list[str]) -> dict:
@@ -169,6 +170,8 @@ Return valid JSON using only these source indices.
     
     print(f"Total valid recommendations: {len(recommendations)}", flush=True)
 
+    recommendations = deduplicate_attractions(recommendations)
+    
     parsed = AttractionRecommendations(
         recommendations=recommendations[:15]
     )
