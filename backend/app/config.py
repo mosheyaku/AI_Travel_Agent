@@ -7,7 +7,7 @@ class Settings(BaseSettings):
 
     app_name: str = "AI Travel Architect"
     llm_provider: str = "ollama"
-    llm_model: str = "llama3.2"
+    llm_model: str = "qwen3:8b"
     llm_base_url: str = "http://localhost:11434/v1"
     openai_api_key: str = ""
     tavily_api_key: str = ""
