@@ -1,4 +1,6 @@
+
 import json
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -12,15 +14,15 @@ async def test_filters_unverified_recommendations(monkeypatch):
         AttractionRecommendation(
             name="Doi Inthanon National Park",
             category="nature",
-            description="Mountain hiking.",
+            description="A national park with hiking trails.",
             relevance_reason="Matches nature interests.",
             source_indices=[1],
         ),
         AttractionRecommendation(
-            name="Invented Safari",
-            category="wildlife",
-            description="Safari with lions.",
-            relevance_reason="Matches wildlife interests.",
+            name="Unknown Attraction",
+            category="adventure",
+            description="An unsupported attraction.",
+            relevance_reason="Matches adventure interests.",
             source_indices=[2],
         ),
     ]
@@ -28,36 +30,162 @@ async def test_filters_unverified_recommendations(monkeypatch):
     sources = [
         {
             "title": "Doi Inthanon Guide",
-            "content": "Doi Inthanon National Park offers mountain hiking.",
+            "content": "Doi Inthanon National Park has hiking trails.",
         },
         {
-            "title": "Chiang Mai Wildlife Guide",
-            "content": "Information about local wildlife.",
+            "title": "Adventure Guide",
+            "content": "General adventure activities in Chiang Mai.",
         },
     ]
 
     async def fake_generate_text(prompt: str) -> str:
+        if prompt.lstrip().startswith("Identify which sources"):
+            if "Attraction: Doi Inthanon National Park" in prompt:
+                return json.dumps({"source_indices": [1]})
+
+            return json.dumps({"source_indices": []})
+
         return json.dumps({
-            "results": [
-                {
-                    "id": 0,
-                    "verified": True,
-                    "description": "Hiking trails in Doi Inthanon National Park.",
-                },
-                {
-                    "id": 1,
-                    "verified": False,
-                    "description": "",
-                },
-            ]
+            "verified": True,
+            "description": "Hiking trails in Doi Inthanon National Park.",
         })
 
     monkeypatch.setattr(verification, "generate_text", fake_generate_text)
 
     result = await verification.verify_recommendations(
-        recommendations, sources
+        recommendations,
+        sources,
+        destination="Chiang Mai, Thailand",
     )
 
     assert len(result) == 1
     assert result[0].name == "Doi Inthanon National Park"
     assert result[0].description == "Hiking trails in Doi Inthanon National Park."
+    assert result[0].source_indices == [1]
+
+
+@pytest.mark.anyio
+async def test_verification_removes_unsupported_activity(monkeypatch):
+    recommendation = AttractionRecommendation(
+        name="Sri Lanna National Park",
+        category="nature",
+        description="A national park offering waterfalls and white-water rafting.",
+        relevance_reason="Matches nature interests.",
+        source_indices=[1],
+    )
+
+    sources = [
+        {
+            "title": "Sri Lanna National Park",
+            "content": "The park features waterfalls, hiking trails, and a reservoir.",
+        }
+    ]
+
+    mock_generate = AsyncMock(
+        side_effect=[
+            json.dumps({"source_indices": [1]}),
+            json.dumps({
+                "verified": True,
+                "description": "A national park featuring waterfalls, hiking trails, and a reservoir.",
+            }),
+        ]
+    )
+
+    monkeypatch.setattr(verification, "generate_text", mock_generate)
+
+    result = await verification.verify_recommendations(
+        [recommendation],
+        sources,
+        destination="Chiang Mai, Thailand",
+    )
+
+    assert len(result) == 1
+    assert "white-water rafting" not in result[0].description
+    assert "waterfalls" in result[0].description
+    assert result[0].source_indices == [1]
+    assert mock_generate.await_count == 2
+
+
+@pytest.mark.anyio
+async def test_excludes_sources_about_unnamed_attractions(monkeypatch):
+    recommendation = AttractionRecommendation(
+        name="Elephant Nature Park",
+        category="wildlife",
+        description="An elephant sanctuary offering river rafting and elephant painting.",
+        relevance_reason="Matches wildlife interests.",
+        source_indices=[1, 2],
+    )
+
+    sources = [
+        {
+            "title": "Elephant Adventures in Chiang Mai",
+            "content": "An unnamed elephant sanctuary offers river rafting and elephant painting.",
+        },
+        {
+            "title": "Elephant Nature Park Guide",
+            "content": "Elephant Nature Park is an elephant rescue and rehabilitation center.",
+        },
+    ]
+
+    mock_generate = AsyncMock(
+        side_effect=[
+            json.dumps({"source_indices": [2]}),
+            json.dumps({
+                "verified": True,
+                "description": "Elephant Nature Park is an elephant rescue and rehabilitation center.",
+            }),
+        ]
+    )
+
+    monkeypatch.setattr(verification, "generate_text", mock_generate)
+
+    result = await verification.verify_recommendations(
+        [recommendation],
+        sources,
+        destination="Chiang Mai, Thailand",
+    )
+
+    assert len(result) == 1
+    assert result[0].source_indices == [2]
+    assert "rafting" not in result[0].description
+    assert "painting" not in result[0].description
+
+    verification_prompt = mock_generate.await_args_list[1].args[0]
+
+    assert '"index": 2' in verification_prompt
+    assert '"index": 1' not in verification_prompt
+    assert mock_generate.await_count == 2
+
+
+
+@pytest.mark.anyio
+async def test_rejects_generic_attraction_collection(monkeypatch):
+    recommendation = AttractionRecommendation(
+        name="Zoo Attractions Chiang Mai",
+        category="wildlife",
+        description="A collection of zoos and animal parks.",
+        relevance_reason="Matches wildlife interests.",
+        source_indices=[1],
+    )
+
+    sources = [
+        {
+            "title": "Zoo Attractions Chiang Mai",
+            "content": "Explore different zoos and wildlife parks in Chiang Mai.",
+        }
+    ]
+
+    mock_generate = AsyncMock(
+        return_value=json.dumps({"source_indices": []})
+    )
+
+    monkeypatch.setattr(verification, "generate_text", mock_generate)
+
+    result = await verification.verify_recommendations(
+        [recommendation],
+        sources,
+        destination="Chiang Mai, Thailand",
+    )
+
+    assert result == []
+    assert mock_generate.await_count == 1

@@ -56,7 +56,7 @@ async def trip_attractions(
     queries = build_attraction_queries(preferences)
 
     try:
-        return await recommend_attractions(queries)
+        return await recommend_attractions(queries,destination=preferences.destination,)
     except ValueError as exc:
         print(f"Trip attractions error: {exc!r}", flush=True)
         
@@ -74,8 +74,7 @@ async def generate_trip(
     queries = build_attraction_queries(preferences)
 
     try:
-        attraction_data = await recommend_attractions(queries)
-
+        attraction_data = await recommend_attractions(queries,destination=preferences.destination,)
         trip_plan = await generate_trip_plan(
             preferences,
             attraction_data["recommendations"],
