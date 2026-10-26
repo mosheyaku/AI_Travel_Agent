@@ -1,3 +1,5 @@
+
+import asyncio
 import json
 
 from app.llm import generate_text
@@ -7,106 +9,142 @@ from app.schemas import AttractionRecommendation
 async def verify_recommendations(
     recommendations: list[AttractionRecommendation],
     sources: list[dict],
+    destination: str | None = None,
 ) -> list[AttractionRecommendation]:
     if not recommendations:
         return []
 
-    evidence = []
+    semaphore = asyncio.Semaphore(3)
 
-    for index, recommendation in enumerate(recommendations):
+    async def verify_one(
+        recommendation: AttractionRecommendation,
+    ) -> AttractionRecommendation | None:
         supporting_sources = [
             {
-                "title": sources[source_index - 1]["title"],
-                "content": sources[source_index - 1]["content"],
+                "index": index,
+                "title": sources[index - 1]["title"],
+                "content": sources[index - 1]["content"],
             }
-            for source_index in recommendation.source_indices
+            for index in recommendation.source_indices
         ]
 
-        evidence.append({
-            "id": index,
-            "name": recommendation.name,
-            "description": recommendation.description,
-            "sources": supporting_sources,
-        })
+        identification_prompt = f"""
+Identify which sources explicitly refer to the named attraction.
 
-    prompt = f"""
-You are a travel recommendation fact-checker.
+Attraction: {recommendation.name}
 
-Review each attraction using only its provided sources.
+Sources:
+{json.dumps(supporting_sources, ensure_ascii=False)}
 
-Attractions and evidence:
-{json.dumps(evidence, ensure_ascii=False)}
-
-Return JSON in this format:
+Return JSON:
 {{
-  "results": [
-    {{
-      "id": 0,
-      "verified": true,
-      "description": "Corrected description supported by the sources"
-    }}
-  ]
+  "source_indices": [1]
 }}
 
 Requirements:
-- Verify that each attraction is identifiable in its sources.
-- If an attraction exists but its description contains unsupported details,
-  remove those details and provide a corrected description.
-- Preserve accurate information.
-- Reject an attraction only if its identity cannot be established
-  or the sources contain insufficient information to describe it.
-- Do not invent activities, locations, prices, durations, or other facts.
-- Keep descriptions short, specific, and useful for travelers.
-- Evaluate every attraction independently.
-- Return exactly one result for each attraction ID.
+- Select only sources that explicitly identify the exact attraction.
+- Do not select sources describing unnamed or similar attractions.
+- Do not assume that two attractions are the same.
+- Return an empty list if no source identifies the attraction.
+- Use only the source indices provided.
 - Return valid JSON only.
 """
 
-    response_text = await generate_text(prompt)
+        async with semaphore:
+            identification_text = await generate_text(identification_prompt)
 
-    try:
-        response = json.loads(response_text)
-        results = response["results"]
+            try:
+                identification = json.loads(identification_text)
+                identified_indices = identification["source_indices"]
 
-        if not isinstance(results, list):
-            raise ValueError("Invalid verification results.")
+                valid_indices = {
+                    source["index"] for source in supporting_sources
+                }
 
-        verified = []
-        seen_ids = set()
+                if (
+                    not isinstance(identified_indices, list)
+                    or any(
+                        type(index) is not int or index not in valid_indices
+                        for index in identified_indices
+                    )
+                ):
+                    raise ValueError("Invalid source indices.")
 
-        for item in results:
-            index = item["id"]
+                identified_indices = list(dict.fromkeys(identified_indices))
 
-            if (
-                type(index) is not int
-                or index < 0
-                or index >= len(recommendations)
-                or index in seen_ids
-            ):
-                raise ValueError("Invalid recommendation ID.")
+                if not identified_indices:
+                    return None
 
-            seen_ids.add(index)
+                identified_sources = [
+                    source
+                    for source in supporting_sources
+                    if source["index"] in identified_indices
+                ]
 
-            if type(item["verified"]) is not bool:
-                raise ValueError("Invalid verification status.")
+                verification_prompt = f"""
+You are a strict travel attraction fact-checker.
 
-            if not item["verified"]:
-                continue
+Requested destination: {destination or "Not specified"}
 
-            description = item["description"]
+Attraction:
+{json.dumps(recommendation.model_dump(), ensure_ascii=False)}
 
-            if not isinstance(description, str) or not description.strip():
-                raise ValueError("Invalid verified description.")
+Verified identity sources:
+{json.dumps(identified_sources, ensure_ascii=False)}
 
-            recommendation = recommendations[index].model_copy(
-                update={"description": description.strip()}
-            )
-            verified.append(recommendation)
+Return JSON:
+{{
+  "verified": true,
+  "description": "Short, factual description"
+}}
 
-        if len(seen_ids) != len(recommendations):
-            raise ValueError("Missing verification results.")
+Requirements:
+- Use only the verified identity sources.
+- Include only facts explicitly connected to this exact attraction.
+- Do not transfer details from other or unnamed attractions.
+- Remove unsupported activities, facilities, distances, and claims.
+- Do not invent information.
+- If a destination is provided, confirm that the attraction is
+  located there or reasonably accessible as a day trip.
+- Reject attractions clearly outside the requested travel area.
+- If geographic evidence is insufficient, reject the attraction.
+- If verified, write a concise, accurate description.
+- The recommendation must represent one specific, identifiable,
+  visitable attraction, trail, park, or activity provider.
+- Reject generic categories, collections of attractions, and
+  umbrella names that represent multiple different places.
+- A source page title is not sufficient proof that an attraction exists.
+- Return valid JSON only.
+"""
 
-    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
-        raise ValueError("The model returned invalid verification results.") from exc
+                verification_text = await generate_text(verification_prompt)
+                response = json.loads(verification_text)
 
-    return verified
+                if type(response["verified"]) is not bool:
+                    raise ValueError("Invalid verification status.")
+
+                if not response["verified"]:
+                    return None
+
+                description = response["description"]
+
+                if not isinstance(description, str) or not description.strip():
+                    raise ValueError("Invalid verified description.")
+
+                return recommendation.model_copy(
+                    update={
+                        "description": description.strip(),
+                        "source_indices": identified_indices,
+                    }
+                )
+
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    "The model returned invalid verification results."
+                ) from exc
+
+    results = await asyncio.gather(
+        *(verify_one(recommendation) for recommendation in recommendations)
+    )
+
+    return [result for result in results if result is not None]

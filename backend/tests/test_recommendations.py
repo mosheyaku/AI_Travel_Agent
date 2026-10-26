@@ -140,8 +140,12 @@ async def test_retries_after_invalid_source_index(monkeypatch):
             }
         )
 
+    async def fake_verify_recommendations(items, sources, destination=None):
+        return items
+
     monkeypatch.setattr(recommendations, "search_attractions", fake_search)
     monkeypatch.setattr(recommendations, "generate_text", fake_generate_text)
+    monkeypatch.setattr(recommendations,"verify_recommendations",fake_verify_recommendations,)
 
     result = await recommendations.recommend_attractions(
         "adventure activities in Chiang Mai"
@@ -191,8 +195,8 @@ async def test_keeps_valid_recommendations_when_some_are_invalid(monkeypatch):
     monkeypatch.setattr(recommendations, "search_attractions", fake_search)
     monkeypatch.setattr(recommendations, "generate_text", fake_generate_text)
 
-    async def fake_verify_recommendations(recommendations, sources):
-        return recommendations
+    async def fake_verify_recommendations(items, sources, destination):
+        return items
         
     monkeypatch.setattr(recommendations,"verify_recommendations",fake_verify_recommendations,)
 
@@ -257,7 +261,7 @@ async def test_merges_search_results_without_duplicate_urls(monkeypatch):
     monkeypatch.setattr(recommendations, "search_attractions", fake_search)
     monkeypatch.setattr(recommendations, "generate_text", fake_generate_text)
 
-    async def fake_verify_recommendations(items, sources):
+    async def fake_verify_recommendations(items, sources, destination):
         return items
         
     monkeypatch.setattr(recommendations,"verify_recommendations",fake_verify_recommendations,)
@@ -319,8 +323,8 @@ async def test_combines_recommendations_from_multiple_interests(monkeypatch):
     monkeypatch.setattr(recommendations, "search_attractions", fake_search)
     monkeypatch.setattr(recommendations, "generate_text", fake_generate_text)
 
-    async def fake_verify_recommendations(recommendations, sources):
-        return recommendations
+    async def fake_verify_recommendations(items, sources, destination):
+        return items
     
     monkeypatch.setattr(recommendations,"verify_recommendations",fake_verify_recommendations,)
 
