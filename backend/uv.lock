@@ -21,6 +21,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "fastapi", extra = ["standard"] },
+    { name = "httpx" },
     { name = "langchain-openai" },
     { name = "langchain-tavily" },
     { name = "openai" },
@@ -36,6 +37,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", extras = ["standard"], specifier = ">=0.148.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "langchain-openai", specifier = ">=1.7.2" },
     { name = "langchain-tavily", specifier = ">=0.2.18" },
     { name = "openai", specifier = ">=3.35.1" },
