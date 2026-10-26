@@ -1,4 +1,5 @@
-
+import re
+import unicodedata
 from enum import StrEnum
 from math import asin, cos, radians, sin, sqrt
 
@@ -42,18 +43,40 @@ def calculate_distance_km(
     return 2 * radius_km * asin(min(1.0, sqrt(a)))
 
 
+def normalize_name(name: str) -> str:
+    normalized = unicodedata.normalize("NFKD", name)
+    normalized = normalized.casefold()
+    normalized = re.sub(r"[^\w\s]", " ", normalized)
+    return " ".join(normalized.split())
+
+
+def matches_attraction_name(
+    attraction_name: str,
+    candidate: LocationCandidate,
+) -> bool:
+    expected = normalize_name(attraction_name)
+    actual = normalize_name(candidate.name.split(",")[0])
+
+    return bool(expected) and expected == actual
+
+
+
 def validate_location(
     destination: LocationCandidate,
     attraction_candidates: list[LocationCandidate],
+    attraction_name: str,
     max_distance_km: float = 150,
 ) -> LocationValidation:
-    if not attraction_candidates:
+    matching_candidates = [
+        candidate
+        for candidate in attraction_candidates
+        if matches_attraction_name(attraction_name, candidate)
+    ]
+
+    if len(matching_candidates) != 1:
         return LocationValidation(status=LocationStatus.UNVERIFIED)
 
-    if len(attraction_candidates) != 1:
-        return LocationValidation(status=LocationStatus.UNVERIFIED)
-
-    attraction = attraction_candidates[0]
+    attraction = matching_candidates[0]
 
     distance = calculate_distance_km(
         destination.latitude,
