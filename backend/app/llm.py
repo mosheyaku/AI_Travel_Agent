@@ -1,12 +1,11 @@
-
 from openai import AsyncOpenAI
 
 from app.config import settings
 
 
 client = AsyncOpenAI(
-    base_url=settings.llm_base_url,
-    api_key="ollama",
+    base_url=settings.llm_base_url if settings.llm_provider == "ollama" else None,
+    api_key="ollama" if settings.llm_provider == "ollama" else settings.openai_api_key,
 )
 
 

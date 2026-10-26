@@ -9,7 +9,7 @@ from app.deduplication import deduplicate_attractions
 from app.verification import verify_recommendations
 
 
-async def recommend_attractions(query: str | list[str]) -> dict:
+async def recommend_attractions(query: str | list[str], destination: str | None = None,) -> dict:
     """Find and validate attraction recommendations for each search query."""
     queries = [query] if isinstance(query, str) else query
 
@@ -85,6 +85,17 @@ Requirements:
 - Answer in English.
 - Return up to 5 distinct attraction recommendations.
 - Do not invent attractions.
+- Each recommendation must represent one specific, identifiable attraction,
+  location, trail, park, or activity provider mentioned in the sources.
+- Use the actual name of the attraction as it appears in the sources.
+- Do not use generic activity names such as "Ziplining in the Jungle",
+  "ATV Jungle Adventure", or "Elephant Sanctuary Experience".
+- If the source mentions a specific provider, use its name instead of
+  describing the general activity.
+- Do not combine multiple attractions or providers into one recommendation.
+- If a source only describes a general activity without identifying
+  a specific location or provider, do not recommend it.
+- Do not rename attractions to make them sound more exciting.
 - Prioritize attractions matching the specific user request.
 - Only recommend attractions in the requested destination or nearby area.
 - Do not include attractions elsewhere in the country.
@@ -97,6 +108,8 @@ Requirements:
 - Hiking, waterfalls, and scenic areas belong to nature.
 - Animal encounters belong to wildlife.
 - Return valid JSON only, without Markdown fences.
+- Reject category pages, collections of attractions, and generic
+  attraction labels that do not identify one specific visitable place.
 """
 
         valid_indices = {index for index, _ in query_sources}
@@ -172,7 +185,11 @@ Return valid JSON using only these source indices.
     print(f"Total valid recommendations: {len(recommendations)}", flush=True)
 
     recommendations = deduplicate_attractions(recommendations)
-    recommendations = await verify_recommendations(recommendations, sources)
+    recommendations = await verify_recommendations(
+    recommendations,
+    sources,
+    destination,
+)
     
     parsed = AttractionRecommendations(
         recommendations=recommendations[:15]
