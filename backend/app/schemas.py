@@ -2,6 +2,7 @@
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
+from app.location_validation import LocationStatus
 
 AttractionCategory = Literal[
     "adventure",
@@ -25,6 +26,11 @@ class AttractionRecommendation(BaseModel):
         min_length=1,
         description="One based indices of supporting sources",
     )
+
+    location_status: LocationStatus = LocationStatus.UNVERIFIED
+    latitude: float | None = None
+    longitude: float | None = None
+    distance_km: float | None = None
 
 
 class AttractionRecommendations(BaseModel):
