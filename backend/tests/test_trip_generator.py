@@ -229,3 +229,185 @@ async def test_rejects_modified_source_indices(monkeypatch):
 
     with pytest.raises(ValueError, match="incorrect sources"):
         await trip_generator.generate_trip_plan(preferences, recommendations)
+
+
+@pytest.mark.anyio
+async def test_preserves_verified_attraction_location(monkeypatch):
+    async def fake_generate_text(prompt: str) -> str:
+        return json.dumps({
+            "destination": "Chiang Mai, Thailand",
+            "days": [
+                {
+                    "day": 1,
+                    "activities": [
+                        {
+                            "name": "Elephant Nature Park",
+                            "description": "Visit an elephant sanctuary.",
+                            "source_indices": [1],
+                            "google_place_id": "fake-place-id",
+                            "latitude": 0.0,
+                            "longitude": 0.0,
+                        }
+                    ],
+                }
+            ],
+        })
+
+    monkeypatch.setattr(trip_generator, "generate_text", fake_generate_text)
+
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=1,
+        interests=["wildlife"],
+    )
+
+    recommendations = [
+        {
+            "name": "Elephant Nature Park",
+            "category": "wildlife",
+            "description": "Visit an elephant sanctuary in Chiang Mai.",
+            "relevance_reason": "Matches wildlife interests.",
+            "source_indices": [1],
+            "location_status": "verified",
+            "latitude": 19.2171729,
+            "longitude": 98.860038,
+            "google_place_id": "real-place-id",
+        }
+    ]
+
+    trip = await trip_generator.generate_trip_plan(
+        preferences,
+        recommendations,
+    )
+
+    activity = trip.days[0].activities[0]
+
+    assert activity.name == "Elephant Nature Park"
+    assert activity.google_place_id == "real-place-id"
+    assert activity.latitude == 19.2171729
+    assert activity.longitude == 98.860038
+    assert activity.location_status == "verified"
+
+
+@pytest.mark.anyio
+async def test_calculates_itinerary_day_distance(monkeypatch):
+    async def fake_generate_text(prompt: str) -> str:
+        return json.dumps({
+            "destination": "Chiang Mai, Thailand",
+            "days": [
+                {
+                    "day": 1,
+                    "activities": [
+                        {
+                            "name": "Attraction A",
+                            "description": "First attraction.",
+                            "source_indices": [1],
+                        },
+                        {
+                            "name": "Attraction B",
+                            "description": "Second attraction.",
+                            "source_indices": [2],
+                        },
+                    ],
+                }
+            ],
+        })
+
+    monkeypatch.setattr(trip_generator, "generate_text", fake_generate_text)
+
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=1,
+        interests=["nature"],
+    )
+
+    recommendations = [
+        {
+            "name": "Attraction A",
+            "source_indices": [1],
+            "latitude": 18.7883,
+            "longitude": 98.9853,
+        },
+        {
+            "name": "Attraction B",
+            "source_indices": [2],
+            "latitude": 18.7900,
+            "longitude": 98.9900,
+        },
+    ]
+
+    trip = await trip_generator.generate_trip_plan(
+        preferences,
+        recommendations,
+    )
+
+    assert trip.days[0].max_distance_km is not None
+    assert trip.days[0].max_distance_km == 0.5
+
+
+@pytest.mark.anyio
+async def test_includes_attraction_distances_in_prompt(monkeypatch):
+    captured_prompts = []
+
+    async def fake_generate_text(prompt: str) -> str:
+        captured_prompts.append(prompt)
+
+        return json.dumps({
+            "destination": "Chiang Mai, Thailand",
+            "days": [
+                {
+                    "day": 1,
+                    "activities": [
+                        {
+                            "name": "Attraction A",
+                            "description": "First attraction.",
+                            "source_indices": [1],
+                        },
+                        {
+                            "name": "Attraction B",
+                            "description": "Second attraction.",
+                            "source_indices": [2],
+                        },
+                    ],
+                }
+            ],
+        })
+
+    monkeypatch.setattr(trip_generator, "generate_text", fake_generate_text)
+
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=1,
+        interests=["nature"],
+    )
+
+    recommendations = [
+        {
+            "name": "Attraction A",
+            "source_indices": [1],
+            "latitude": 18.7883,
+            "longitude": 98.9853,
+            "google_place_id": "place-a",
+            "location_status": "verified",
+        },
+        {
+            "name": "Attraction B",
+            "source_indices": [2],
+            "latitude": 18.7900,
+            "longitude": 98.9900,
+            "google_place_id": "place-b",
+            "location_status": "verified",
+        },
+    ]
+
+    await trip_generator.generate_trip_plan(
+        preferences,
+        recommendations,
+    )
+
+    prompt = captured_prompts[0]
+
+    assert "Straight-line distances between verified attractions" in prompt
+    assert '"from": "Attraction A"' in prompt
+    assert '"to": "Attraction B"' in prompt
+    assert '"distance_km":' in prompt
