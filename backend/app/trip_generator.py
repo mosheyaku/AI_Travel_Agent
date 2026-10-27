@@ -5,7 +5,7 @@ from pydantic import ValidationError
 from app.llm import generate_text
 from app.location_validation import LocationStatus
 from app.schemas import TravelItinerary, TravelPreferences
-from app.itinerary_distances import calculate_day_max_distance
+from app.itinerary_distances import calculate_day_max_distance, build_attraction_distances
 
 
 async def generate_trip_plan(
@@ -14,6 +14,9 @@ async def generate_trip_plan(
 ) -> TravelItinerary:
     """Generate a daily trip plan from attraction recommendations."""
     attractions_text = json.dumps(recommendations, ensure_ascii=False)
+
+    distances = build_attraction_distances(recommendations)
+    distances_text = json.dumps(distances, ensure_ascii=False)
 
     prompt = f"""
 You are a travel planning assistant.
@@ -26,6 +29,9 @@ User interests: {", ".join(preferences.interests)}
 
 Available attractions:
 {attractions_text}
+
+Straight-line distances between verified attractions (km):
+{distances_text}
 
 Requirements:
 - Use only attractions from the provided list.
@@ -48,6 +54,10 @@ Requirements:
 - Number days sequentially starting from 1.
 - If there are too few suitable attractions, leave some days with fewer or no activities.
 - Return valid JSON only, without Markdown fences.
+- Prefer grouping geographically close attractions on the same day.
+- Avoid combining distant attractions when closer alternatives are available.
+- Distances are straight-line estimates, not driving distances or travel times.
+- Do not invent distances for attractions without verified coordinates.
 
 JSON structure:
 {{
