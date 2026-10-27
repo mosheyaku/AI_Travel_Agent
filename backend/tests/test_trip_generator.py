@@ -229,3 +229,61 @@ async def test_rejects_modified_source_indices(monkeypatch):
 
     with pytest.raises(ValueError, match="incorrect sources"):
         await trip_generator.generate_trip_plan(preferences, recommendations)
+
+
+@pytest.mark.anyio
+async def test_preserves_verified_attraction_location(monkeypatch):
+    async def fake_generate_text(prompt: str) -> str:
+        return json.dumps({
+            "destination": "Chiang Mai, Thailand",
+            "days": [
+                {
+                    "day": 1,
+                    "activities": [
+                        {
+                            "name": "Elephant Nature Park",
+                            "description": "Visit an elephant sanctuary.",
+                            "source_indices": [1],
+                            "google_place_id": "fake-place-id",
+                            "latitude": 0.0,
+                            "longitude": 0.0,
+                        }
+                    ],
+                }
+            ],
+        })
+
+    monkeypatch.setattr(trip_generator, "generate_text", fake_generate_text)
+
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=1,
+        interests=["wildlife"],
+    )
+
+    recommendations = [
+        {
+            "name": "Elephant Nature Park",
+            "category": "wildlife",
+            "description": "Visit an elephant sanctuary in Chiang Mai.",
+            "relevance_reason": "Matches wildlife interests.",
+            "source_indices": [1],
+            "location_status": "verified",
+            "latitude": 19.2171729,
+            "longitude": 98.860038,
+            "google_place_id": "real-place-id",
+        }
+    ]
+
+    trip = await trip_generator.generate_trip_plan(
+        preferences,
+        recommendations,
+    )
+
+    activity = trip.days[0].activities[0]
+
+    assert activity.name == "Elephant Nature Park"
+    assert activity.google_place_id == "real-place-id"
+    assert activity.latitude == 19.2171729
+    assert activity.longitude == 98.860038
+    assert activity.location_status == "verified"

@@ -65,6 +65,10 @@ class ItineraryActivity(BaseModel):
     description: str
     source_indices: list[int] = Field(min_length=1)
 
+    location_status: LocationStatus = LocationStatus.UNVERIFIED
+    latitude: float | None = None
+    longitude: float | None = None
+    google_place_id: str | None = None
 
 class ItineraryDay(BaseModel):
     day: int = Field(ge=1)
