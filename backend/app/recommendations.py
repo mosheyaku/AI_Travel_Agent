@@ -7,6 +7,7 @@ from app.schemas import AttractionRecommendation, AttractionRecommendations
 from app.search import search_attractions
 from app.deduplication import deduplicate_attractions
 from app.verification import verify_recommendations
+from app.attraction_locations import validate_attraction_locations
 
 
 async def recommend_attractions(query: str | list[str], destination: str | None = None,) -> dict:
@@ -189,7 +190,10 @@ Return valid JSON using only these source indices.
     recommendations,
     sources,
     destination,
-)
+    )
+
+    if destination:
+        recommendations = await validate_attraction_locations(recommendations,destination,)
     
     parsed = AttractionRecommendations(
         recommendations=recommendations[:15]

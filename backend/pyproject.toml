@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi[standard]>=0.148.0",
+    "httpx>=0.28.1",
     "langchain-openai>=1.7.2",
     "langchain-tavily>=0.2.18",
     "openai>=3.35.1",
