@@ -73,7 +73,7 @@ class ItineraryActivity(BaseModel):
 class ItineraryDay(BaseModel):
     day: int = Field(ge=1)
     activities: list[ItineraryActivity]
-
+    max_distance_km: float | None = None
 
 class TravelItinerary(BaseModel):
     destination: str
