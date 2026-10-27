@@ -1,49 +1,61 @@
-from app.geocoding import search_locations, LocationCandidate
-from app.location_validation import (
-    LocationStatus,
-    matches_attraction_name,
-    validate_location,
-    normalize_name,
-)
-from app.schemas import AttractionRecommendation
 import httpx
 
+from app.geocoding import LocationCandidate, search_locations
 from app.google_places import search_google_places
-from app.place_matching import names_match
-from app.location_validation import calculate_distance_km
+from app.location_validation import (
+    LocationStatus,
+    calculate_distance_km,
+    normalize_name,
+)
+from app.place_matching import (
+    extract_search_names,
+    is_likely_office,
+    names_match,
+)
+from app.schemas import AttractionRecommendation
+
 
 async def validate_attraction_locations(
     recommendations: list[AttractionRecommendation],
-    destination: str,) -> list[AttractionRecommendation]:
-    
+    destination: str,
+) -> list[AttractionRecommendation]:
     try:
         destination_candidates = await search_locations(destination, "")
     except (httpx.HTTPError, TimeoutError):
         return recommendations
 
-    destination_location = find_destination(destination,destination_candidates,)
-    
+    destination_location = find_destination(
+        destination,
+        destination_candidates,
+    )
+
     if destination_location is None:
         return recommendations
 
-
     validated_recommendations = []
 
-    
     for recommendation in recommendations:
-        try:
-            places = await search_google_places(
-                recommendation.name,
-                destination,
-            )
-        except (httpx.HTTPError, TimeoutError):
-            validated_recommendations.append(recommendation)
-            continue
+        search_names = extract_search_names(recommendation.name)
+        matching_places = []
 
-        matching_places = [
-            place for place in places
-            if names_match(recommendation.name, place.name)
-        ]
+        for search_name in search_names[:2]:
+            try:
+                places = await search_google_places(
+                    search_name,
+                    destination,
+                )
+            except (httpx.HTTPError, TimeoutError):
+                continue
+
+            matching_places = [
+                place
+                for place in places
+                if names_match(search_name, place.name)
+                and not is_likely_office(place.types)
+            ]
+
+            if matching_places:
+                break
 
         if len(matching_places) != 1:
             validated_recommendations.append(recommendation)
@@ -71,7 +83,6 @@ async def validate_attraction_locations(
                 }
             )
         )
-
 
     return validated_recommendations
 

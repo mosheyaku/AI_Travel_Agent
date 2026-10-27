@@ -1,6 +1,6 @@
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.config import settings
 
@@ -13,6 +13,7 @@ class GooglePlace(BaseModel):
     name: str
     latitude: float
     longitude: float
+    types: list[str] = Field(default_factory=list)
 
 
 async def search_google_places(
@@ -27,7 +28,9 @@ async def search_google_places(
 
     headers = {
         "X-Goog-Api-Key": settings.google_places_api_key,
-        "X-Goog-FieldMask": "places.id,places.displayName,places.location",
+        "X-Goog-FieldMask": (
+            "places.id,places.displayName,places.location,places.types"
+        ),
         "Content-Type": "application/json",
     }
 
@@ -53,6 +56,7 @@ async def search_google_places(
             name=place["displayName"]["text"],
             latitude=place["location"]["latitude"],
             longitude=place["location"]["longitude"],
+            types=place.get("types", []),
         )
         for place in places
     ]
