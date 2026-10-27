@@ -31,6 +31,7 @@ class AttractionRecommendation(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     distance_km: float | None = None
+    google_place_id: str | None = None
 
 
 class AttractionRecommendations(BaseModel):
