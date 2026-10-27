@@ -70,10 +70,14 @@ class ItineraryActivity(BaseModel):
     longitude: float | None = None
     google_place_id: str | None = None
 
+
 class ItineraryDay(BaseModel):
     day: int = Field(ge=1)
     activities: list[ItineraryActivity]
     max_distance_km: float | None = None
+    driving_distance_km: float | None = None
+    driving_duration_minutes: int | None = None
+    
 
 class TravelItinerary(BaseModel):
     destination: str
