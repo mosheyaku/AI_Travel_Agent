@@ -331,8 +331,8 @@ async def test_calculates_itinerary_day_distance(monkeypatch):
         {
             "name": "Attraction B",
             "source_indices": [2],
-            "latitude": 19.2000,
-            "longitude": 98.8600,
+            "latitude": 18.7900,
+            "longitude": 98.9900,
         },
     ]
 
@@ -342,7 +342,7 @@ async def test_calculates_itinerary_day_distance(monkeypatch):
     )
 
     assert trip.days[0].max_distance_km is not None
-    assert trip.days[0].max_distance_km > 40
+    assert trip.days[0].max_distance_km == 0.5
 
 
 @pytest.mark.anyio
@@ -388,13 +388,15 @@ async def test_includes_attraction_distances_in_prompt(monkeypatch):
             "latitude": 18.7883,
             "longitude": 98.9853,
             "google_place_id": "place-a",
+            "location_status": "verified",
         },
         {
             "name": "Attraction B",
             "source_indices": [2],
-            "latitude": 19.2000,
-            "longitude": 98.8600,
+            "latitude": 18.7900,
+            "longitude": 98.9900,
             "google_place_id": "place-b",
+            "location_status": "verified",
         },
     ]
 
