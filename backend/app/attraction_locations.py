@@ -10,7 +10,8 @@ from app.location_validation import (
 from app.place_matching import (
     extract_search_names,
     is_likely_office,
-    names_match,
+    names_match_or_alias,
+    is_suspicious_activity_location,
 )
 from app.schemas import AttractionRecommendation
 
@@ -50,7 +51,7 @@ async def validate_attraction_locations(
             matching_places = [
                 place 
                 for place in places
-                if any(names_match(candidate_name, place.name)
+                if any(names_match_or_alias(candidate_name, place.name)
                 for candidate_name in search_names)
                 and not is_likely_office(place.types)
             ]
@@ -72,6 +73,14 @@ async def validate_attraction_locations(
         )
 
         if distance > 150:
+            continue
+
+        if is_suspicious_activity_location(
+            recommendation.name,
+            recommendation.category,
+            distance,
+        ):
+            validated_recommendations.append(recommendation)
             continue
 
         validated_recommendations.append(

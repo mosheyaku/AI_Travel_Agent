@@ -101,6 +101,7 @@ def test_returns_zero_for_same_location():
     assert calculate_day_max_distance(day) == 0.0
 
 
+
 def test_builds_distances_between_verified_attractions():
     recommendations = [
         {
@@ -108,12 +109,14 @@ def test_builds_distances_between_verified_attractions():
             "latitude": 18.7883,
             "longitude": 98.9853,
             "google_place_id": "place-a",
+            "location_status": "verified",
         },
         {
             "name": "Attraction B",
             "latitude": 19.2000,
             "longitude": 98.8600,
             "google_place_id": "place-b",
+            "location_status": "verified",
         },
         {
             "name": "Attraction C",

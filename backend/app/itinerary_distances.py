@@ -1,4 +1,4 @@
-from app.location_validation import calculate_distance_km
+from app.location_validation import calculate_distance_km, LocationStatus
 from app.schemas import ItineraryDay
 
 
@@ -36,9 +36,10 @@ def build_attraction_distances(
     located = [
         recommendation
         for recommendation in recommendations
-        if recommendation.get("latitude") is not None
+        if recommendation.get("location_status") == LocationStatus.VERIFIED
+        and recommendation.get("latitude") is not None
         and recommendation.get("longitude") is not None
-        and recommendation.get("google_place_id") is not None
+        and recommendation.get("google_place_id")
     ]
 
     distances = []
