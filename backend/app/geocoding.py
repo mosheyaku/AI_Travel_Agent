@@ -46,6 +46,7 @@ async def search_locations(
                     "q": query,
                     "format": "jsonv2",
                     "limit": 5,
+                    "accept-language": "en",
                 },
                 headers={"User-Agent": USER_AGENT},
             )
