@@ -1,59 +1,98 @@
-from app.geocoding import search_locations, LocationCandidate
+import httpx
+
+from app.geocoding import LocationCandidate, search_locations
+from app.google_places import search_google_places
 from app.location_validation import (
     LocationStatus,
-    matches_attraction_name,
-    validate_location,
+    calculate_distance_km,
     normalize_name,
 )
+from app.place_matching import (
+    extract_search_names,
+    is_likely_office,
+    names_match_or_alias,
+    is_suspicious_activity_location,
+)
 from app.schemas import AttractionRecommendation
-import httpx
+
 
 async def validate_attraction_locations(
     recommendations: list[AttractionRecommendation],
-    destination: str,) -> list[AttractionRecommendation]:
-    
+    destination: str,
+) -> list[AttractionRecommendation]:
     try:
         destination_candidates = await search_locations(destination, "")
     except (httpx.HTTPError, TimeoutError):
         return recommendations
 
-    destination_location = find_destination(destination,destination_candidates,)
-    
+    destination_location = find_destination(
+        destination,
+        destination_candidates,
+    )
+
     if destination_location is None:
         return recommendations
-
 
     validated_recommendations = []
 
     for recommendation in recommendations:
-        try:
-            candidates = await search_locations(recommendation.name, destination,)
-        except (httpx.HTTPError, TimeoutError):
+        search_names = extract_search_names(recommendation.name)
+        matching_places = []
+
+        for search_name in search_names[:2]:
+            try:
+                places = await search_google_places(
+                    search_name,
+                    destination,
+                )
+            except (httpx.HTTPError, TimeoutError):
+                continue
+
+            matching_places = [
+                place 
+                for place in places
+                if any(names_match_or_alias(candidate_name, place.name)
+                for candidate_name in search_names)
+                and not is_likely_office(place.types)
+            ]
+
+            if matching_places:
+                break
+
+        if len(matching_places) != 1:
             validated_recommendations.append(recommendation)
             continue
 
-        result = validate_location(
-            destination=destination_location,
-            attraction_candidates=candidates,
-            attraction_name=recommendation.name,
+        place = matching_places[0]
+
+        distance = calculate_distance_km(
+            destination_location.latitude,
+            destination_location.longitude,
+            place.latitude,
+            place.longitude,
         )
 
-        if result.status == LocationStatus.OUT_OF_RANGE:
+        if distance > 150:
             continue
 
-        updates = {
-            "location_status": result.status,
-        }
-
-        if result.location is not None:
-            updates.update({
-                "latitude": result.location.latitude,
-                "longitude": result.location.longitude,
-                "distance_km": result.distance_km,
-            })
+        if is_suspicious_activity_location(
+            recommendation.name,
+            recommendation.category,
+            distance,
+        ):
+            validated_recommendations.append(recommendation)
+            continue
 
         validated_recommendations.append(
-            recommendation.model_copy(update=updates)
+            recommendation.model_copy(
+                update={
+                    "location_status": LocationStatus.VERIFIED,
+                    "latitude": place.latitude,
+                    "longitude": place.longitude,
+                    "distance_km": round(distance, 1),
+                    "google_place_id": place.place_id,
+                }
+            )
         )
 
     return validated_recommendations

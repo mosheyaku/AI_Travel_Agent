@@ -31,6 +31,7 @@ class AttractionRecommendation(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     distance_km: float | None = None
+    google_place_id: str | None = None
 
 
 class AttractionRecommendations(BaseModel):
@@ -64,11 +65,15 @@ class ItineraryActivity(BaseModel):
     description: str
     source_indices: list[int] = Field(min_length=1)
 
+    location_status: LocationStatus = LocationStatus.UNVERIFIED
+    latitude: float | None = None
+    longitude: float | None = None
+    google_place_id: str | None = None
 
 class ItineraryDay(BaseModel):
     day: int = Field(ge=1)
     activities: list[ItineraryActivity]
-
+    max_distance_km: float | None = None
 
 class TravelItinerary(BaseModel):
     destination: str
