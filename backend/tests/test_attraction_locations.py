@@ -106,6 +106,7 @@ async def test_keeps_unverified_attraction(monkeypatch):
     assert result[0].latitude is None
     assert result[0].longitude is None
     assert result[0].distance_km is None
+    assert result[0].google_place_id is None
 
 
 @pytest.mark.anyio
@@ -252,6 +253,7 @@ async def test_verifies_google_place(monkeypatch):
     assert result[0].latitude == 19.214683
     assert result[0].longitude == 98.8616387
     assert result[0].distance_km is not None
+    assert result[0].google_place_id == "elephant-nature-park"
 
 
 @pytest.mark.anyio

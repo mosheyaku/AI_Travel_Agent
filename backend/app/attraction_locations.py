@@ -80,6 +80,7 @@ async def validate_attraction_locations(
                     "latitude": place.latitude,
                     "longitude": place.longitude,
                     "distance_km": round(distance, 1),
+                    "google_place_id": place.place_id,
                 }
             )
         )
