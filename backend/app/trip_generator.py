@@ -1,9 +1,9 @@
-
 import json
 
 from pydantic import ValidationError
 
 from app.llm import generate_text
+from app.location_validation import LocationStatus
 from app.schemas import TravelItinerary, TravelPreferences
 
 
@@ -68,7 +68,6 @@ JSON structure:
 
     response_text = await generate_text(prompt)
 
-    
     try:
         trip = TravelItinerary.model_validate(json.loads(response_text))
     except (json.JSONDecodeError, ValidationError) as exc:
@@ -83,7 +82,7 @@ JSON structure:
         )
 
     allowed_attractions = {
-        recommendation["name"].strip().casefold(): recommendation["source_indices"]
+        recommendation["name"].strip().casefold(): recommendation
         for recommendation in recommendations
     }
 
@@ -103,9 +102,22 @@ JSON structure:
                     f"The trip plan contains a duplicate attraction: {activity.name}"
                 )
 
-            if activity.source_indices != allowed_attractions[name]:
-              raise ValueError(f"The trip plan contains incorrect sources for: {activity.name}")
-              
-            seen_names.add(name)
-    return trip
+            original = allowed_attractions[name]
 
+            if activity.source_indices != original["source_indices"]:
+                raise ValueError(
+                    f"The trip plan contains incorrect sources for: {activity.name}"
+                )
+
+            activity.name = original["name"]
+            activity.location_status = original.get(
+                "location_status",
+                LocationStatus.UNVERIFIED,
+            )
+            activity.latitude = original.get("latitude")
+            activity.longitude = original.get("longitude")
+            activity.google_place_id = original.get("google_place_id")
+
+            seen_names.add(name)
+
+    return trip
