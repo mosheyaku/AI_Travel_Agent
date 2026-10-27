@@ -5,6 +5,7 @@ from pydantic import ValidationError
 from app.llm import generate_text
 from app.location_validation import LocationStatus
 from app.schemas import TravelItinerary, TravelPreferences
+from app.itinerary_distances import calculate_day_max_distance
 
 
 async def generate_trip_plan(
@@ -119,5 +120,8 @@ JSON structure:
             activity.google_place_id = original.get("google_place_id")
 
             seen_names.add(name)
+
+    for day in trip.days:
+        day.max_distance_km = calculate_day_max_distance(day)
 
     return trip
