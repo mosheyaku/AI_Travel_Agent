@@ -343,3 +343,69 @@ async def test_calculates_itinerary_day_distance(monkeypatch):
 
     assert trip.days[0].max_distance_km is not None
     assert trip.days[0].max_distance_km > 40
+
+
+@pytest.mark.anyio
+async def test_includes_attraction_distances_in_prompt(monkeypatch):
+    captured_prompts = []
+
+    async def fake_generate_text(prompt: str) -> str:
+        captured_prompts.append(prompt)
+
+        return json.dumps({
+            "destination": "Chiang Mai, Thailand",
+            "days": [
+                {
+                    "day": 1,
+                    "activities": [
+                        {
+                            "name": "Attraction A",
+                            "description": "First attraction.",
+                            "source_indices": [1],
+                        },
+                        {
+                            "name": "Attraction B",
+                            "description": "Second attraction.",
+                            "source_indices": [2],
+                        },
+                    ],
+                }
+            ],
+        })
+
+    monkeypatch.setattr(trip_generator, "generate_text", fake_generate_text)
+
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=1,
+        interests=["nature"],
+    )
+
+    recommendations = [
+        {
+            "name": "Attraction A",
+            "source_indices": [1],
+            "latitude": 18.7883,
+            "longitude": 98.9853,
+            "google_place_id": "place-a",
+        },
+        {
+            "name": "Attraction B",
+            "source_indices": [2],
+            "latitude": 19.2000,
+            "longitude": 98.8600,
+            "google_place_id": "place-b",
+        },
+    ]
+
+    await trip_generator.generate_trip_plan(
+        preferences,
+        recommendations,
+    )
+
+    prompt = captured_prompts[0]
+
+    assert "Straight-line distances between verified attractions" in prompt
+    assert '"from": "Attraction A"' in prompt
+    assert '"to": "Attraction B"' in prompt
+    assert '"distance_km":' in prompt
