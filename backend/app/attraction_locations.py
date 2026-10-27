@@ -48,9 +48,10 @@ async def validate_attraction_locations(
                 continue
 
             matching_places = [
-                place
+                place 
                 for place in places
-                if names_match(search_name, place.name)
+                if any(names_match(candidate_name, place.name)
+                for candidate_name in search_names)
                 and not is_likely_office(place.types)
             ]
 

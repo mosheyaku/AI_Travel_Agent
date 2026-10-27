@@ -474,3 +474,58 @@ async def test_does_not_verify_travel_agency(monkeypatch):
     assert result[0].latitude is None
     assert result[0].longitude is None
     assert result[0].distance_km is None
+
+
+@pytest.mark.anyio
+async def test_matches_alternative_name_from_google_results(monkeypatch):
+    async def fake_search_locations(name, destination):
+        return [
+            LocationCandidate(
+                name="Chiang Mai City Municipality, Thailand",
+                latitude=18.7883,
+                longitude=98.9853,
+                osm_type="relation",
+                osm_id=123,
+            )
+        ]
+
+    async def fake_search_google_places(name, destination):
+        return [
+            GooglePlace(
+                place_id="sticky-waterfall-id",
+                name="Bua Thong Waterfall",
+                latitude=19.078,
+                longitude=99.080,
+                types=["tourist_attraction"],
+            )
+        ]
+
+    monkeypatch.setattr(
+        attraction_locations,
+        "search_locations",
+        fake_search_locations,
+    )
+    monkeypatch.setattr(
+        attraction_locations,
+        "search_google_places",
+        fake_search_google_places,
+    )
+
+    recommendations = [
+        AttractionRecommendation(
+            name="Sticky Waterfall (Bua Thong Waterfall)",
+            category="nature",
+            description="A limestone waterfall.",
+            relevance_reason="Matches nature interests.",
+            source_indices=[1],
+        )
+    ]
+
+    result = await attraction_locations.validate_attraction_locations(
+        recommendations,
+        "Chiang Mai, Thailand",
+    )
+
+    assert len(result) == 1
+    assert result[0].location_status == LocationStatus.VERIFIED
+    assert result[0].google_place_id == "sticky-waterfall-id"
