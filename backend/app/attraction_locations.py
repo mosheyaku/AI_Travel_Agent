@@ -8,6 +8,10 @@ from app.location_validation import (
 from app.schemas import AttractionRecommendation
 import httpx
 
+from app.google_places import search_google_places
+from app.place_matching import names_match
+from app.location_validation import calculate_distance_km
+
 async def validate_attraction_locations(
     recommendations: list[AttractionRecommendation],
     destination: str,) -> list[AttractionRecommendation]:
@@ -25,36 +29,49 @@ async def validate_attraction_locations(
 
     validated_recommendations = []
 
+    
     for recommendation in recommendations:
         try:
-            candidates = await search_locations(recommendation.name, destination,)
+            places = await search_google_places(
+                recommendation.name,
+                destination,
+            )
         except (httpx.HTTPError, TimeoutError):
             validated_recommendations.append(recommendation)
             continue
 
-        result = validate_location(
-            destination=destination_location,
-            attraction_candidates=candidates,
-            attraction_name=recommendation.name,
-        )
+        matching_places = [
+            place for place in places
+            if names_match(recommendation.name, place.name)
+        ]
 
-        if result.status == LocationStatus.OUT_OF_RANGE:
+        if len(matching_places) != 1:
+            validated_recommendations.append(recommendation)
             continue
 
-        updates = {
-            "location_status": result.status,
-        }
+        place = matching_places[0]
 
-        if result.location is not None:
-            updates.update({
-                "latitude": result.location.latitude,
-                "longitude": result.location.longitude,
-                "distance_km": result.distance_km,
-            })
+        distance = calculate_distance_km(
+            destination_location.latitude,
+            destination_location.longitude,
+            place.latitude,
+            place.longitude,
+        )
+
+        if distance > 150:
+            continue
 
         validated_recommendations.append(
-            recommendation.model_copy(update=updates)
+            recommendation.model_copy(
+                update={
+                    "location_status": LocationStatus.VERIFIED,
+                    "latitude": place.latitude,
+                    "longitude": place.longitude,
+                    "distance_km": round(distance, 1),
+                }
+            )
         )
+
 
     return validated_recommendations
 
