@@ -66,15 +66,20 @@ async def trip_attractions(
         ) from exc
 
 
+
 @app.post("/trips/generate")
 async def generate_trip(
     preferences: TravelPreferences,
 ) -> dict:
-    """Generate a trip plan based on travel preferences."""
+    """Generate a trip plan with estimated driving routes."""
     queries = build_attraction_queries(preferences)
 
     try:
-        attraction_data = await recommend_attractions(queries,destination=preferences.destination,)
+        attraction_data = await recommend_attractions(
+            queries,
+            destination=preferences.destination,
+        )
+
         trip_plan = await generate_trip_plan(
             preferences,
             attraction_data["recommendations"],
@@ -84,9 +89,11 @@ async def generate_trip(
             "trip": trip_plan.model_dump(),
             "sources": attraction_data["sources"],
         }
+
     except ValueError as exc:
-        print(f"Trip generation error: {exc!r}")
+        print(f"Trip generation error: {exc!r}", flush=True)
+
         raise HTTPException(
-        status_code=502,
-        detail="The trip planning service returned an invalid response.",
-    ) from exc
+            status_code=502,
+            detail="The trip planning service returned an invalid response.",
+        ) from exc

@@ -32,6 +32,7 @@ class AttractionRecommendation(BaseModel):
     longitude: float | None = None
     distance_km: float | None = None
     google_place_id: str | None = None
+    duration_type: Literal["short", "half_day", "full_day", "unknown"] = "unknown"
 
 
 class AttractionRecommendations(BaseModel):
@@ -69,11 +70,19 @@ class ItineraryActivity(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     google_place_id: str | None = None
+    duration_type: Literal["short", "half_day", "full_day", "unknown"] = "unknown"
+
 
 class ItineraryDay(BaseModel):
     day: int = Field(ge=1)
     activities: list[ItineraryActivity]
     max_distance_km: float | None = None
+    driving_distance_km: float | None = None
+    driving_duration_minutes: int | None = None
+    driving_status: Literal[
+        "verified", "exceeds_limit", "unknown"
+    ] = "unknown"
+    
 
 class TravelItinerary(BaseModel):
     destination: str
