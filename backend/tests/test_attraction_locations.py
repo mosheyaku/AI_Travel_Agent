@@ -18,10 +18,11 @@ def make_location(name, lat, lon):
     )
 
 
-def make_recommendation(name, category="nature"):
+def make_recommendation(name, category="nature", activity_type="hiking"):
     return AttractionRecommendation(
         name=name,
         category=category,
+        activity_type=activity_type,
         description="An attraction.",
         relevance_reason="Matches the user's interests.",
         source_indices=[1],
@@ -524,6 +525,7 @@ async def test_matches_alternative_name_from_google_results(monkeypatch):
         AttractionRecommendation(
             name="Sticky Waterfall (Bua Thong Waterfall)",
             category="nature",
+            activity_type="waterfall",
             description="A limestone waterfall.",
             relevance_reason="Matches nature interests.",
             source_indices=[1],

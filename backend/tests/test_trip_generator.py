@@ -9,9 +9,10 @@ from app.schemas import TravelItinerary, TravelPreferences
 from app.trip_generator import find_activity_load_issues
 
 
-def verified_attraction(name, source_index, **extra):
+def verified_attraction(name, source_index, activity_type="other", **extra):
     data = {
         "name": name,
+        "activity_type": activity_type,
         "source_indices": [source_index],
         "location_status": LocationStatus.VERIFIED,
         "latitude": 18.7,
@@ -47,11 +48,13 @@ async def test_generate_trip_plan(monkeypatch):
         verified_attraction(
             "Skyline Adventure",
             1,
+            activity_type="zipline",
             description="Ziplining through the jungle.",
         ),
         verified_attraction(
             "Doi Inthanon National Park",
             2,
+            activity_type="hiking",
             description="Hiking and scenic viewpoints.",
         ),
     ]
@@ -65,6 +68,7 @@ async def test_generate_trip_plan(monkeypatch):
                     "activities": [
                         {
                             "name": "Skyline Adventure",
+                            "activity_type": "zipline",
                             "description": "Ziplining through the jungle.",
                             "source_indices": [1],
                         }
@@ -75,6 +79,7 @@ async def test_generate_trip_plan(monkeypatch):
                     "activities": [
                         {
                             "name": "Doi Inthanon National Park",
+                            "activity_type": "hiking",
                             "description": "Hiking and scenic viewpoints.",
                             "source_indices": [2],
                         }
@@ -96,7 +101,9 @@ async def test_generate_trip_plan(monkeypatch):
 
     assert len(result.days) == 2
     assert result.days[0].activities[0].name == "Skyline Adventure"
+    assert result.days[0].activities[0].activity_type == "zipline"
     assert result.days[1].activities[0].name == "Doi Inthanon National Park"
+    assert result.days[1].activities[0].activity_type == "hiking"
 
 
 @pytest.mark.anyio
@@ -149,6 +156,7 @@ async def test_rejects_unknown_attraction(monkeypatch):
                     "activities": [
                         {
                             "name": "Invented Adventure Park",
+                            "activity_type": "other",
                             "description": "An invented attraction.",
                             "source_indices": [1],
                         }
@@ -173,6 +181,7 @@ async def test_rejects_unknown_attraction(monkeypatch):
         verified_attraction(
             "Skyline Adventure",
             1,
+            activity_type="zipline",
             category="adventure",
             description="Ziplining in Chiang Mai.",
             relevance_reason="Matches adventure interests.",
@@ -197,6 +206,7 @@ async def test_rejects_duplicate_attraction(monkeypatch):
                     "activities": [
                         {
                             "name": "Skyline Adventure",
+                            "activity_type": "zipline",
                             "description": "Ziplining in the jungle.",
                             "source_indices": [1],
                         }
@@ -207,6 +217,7 @@ async def test_rejects_duplicate_attraction(monkeypatch):
                     "activities": [
                         {
                             "name": "Skyline Adventure",
+                            "activity_type": "zipline",
                             "description": "Another visit to the same attraction.",
                             "source_indices": [1],
                         }
@@ -231,6 +242,7 @@ async def test_rejects_duplicate_attraction(monkeypatch):
         verified_attraction(
             "Skyline Adventure",
             1,
+            activity_type="zipline",
             category="adventure",
             description="Ziplining in Chiang Mai.",
             relevance_reason="Matches adventure interests.",
@@ -255,6 +267,7 @@ async def test_rejects_modified_source_indices(monkeypatch):
                     "activities": [
                         {
                             "name": "Skyline Adventure",
+                            "activity_type": "zipline",
                             "description": "Ziplining in Chiang Mai.",
                             "source_indices": [99],
                         }
@@ -279,6 +292,7 @@ async def test_rejects_modified_source_indices(monkeypatch):
         verified_attraction(
             "Skyline Adventure",
             1,
+            activity_type="zipline",
             category="adventure",
             description="Ziplining in Chiang Mai.",
             relevance_reason="Matches adventure interests.",
@@ -303,6 +317,7 @@ async def test_preserves_verified_attraction_location(monkeypatch):
                     "activities": [
                         {
                             "name": "Elephant Nature Park",
+                            "activity_type": "elephant_sanctuary",
                             "description": "Visit an elephant sanctuary.",
                             "source_indices": [1],
                             "google_place_id": "fake-place-id",
@@ -330,6 +345,7 @@ async def test_preserves_verified_attraction_location(monkeypatch):
         verified_attraction(
             "Elephant Nature Park",
             1,
+            activity_type="elephant_sanctuary",
             category="wildlife",
             description="Visit an elephant sanctuary in Chiang Mai.",
             relevance_reason="Matches wildlife interests.",
@@ -347,6 +363,7 @@ async def test_preserves_verified_attraction_location(monkeypatch):
     activity = trip.days[0].activities[0]
 
     assert activity.name == "Elephant Nature Park"
+    assert activity.activity_type == "elephant_sanctuary"
     assert activity.google_place_id == "real-place-id"
     assert activity.latitude == 19.2171729
     assert activity.longitude == 98.860038
@@ -367,11 +384,13 @@ async def test_calculates_itinerary_day_distance(
                     "activities": [
                         {
                             "name": "Attraction A",
+                            "activity_type": "other",
                             "description": "First attraction.",
                             "source_indices": [1],
                         },
                         {
                             "name": "Attraction B",
+                            "activity_type": "other",
                             "description": "Second attraction.",
                             "source_indices": [2],
                         },
@@ -434,11 +453,13 @@ async def test_includes_attraction_distances_in_prompt(
                     "activities": [
                         {
                             "name": "Attraction A",
+                            "activity_type": "other",
                             "description": "First attraction.",
                             "source_indices": [1],
                         },
                         {
                             "name": "Attraction B",
+                            "activity_type": "other",
                             "description": "Second attraction.",
                             "source_indices": [2],
                         },
@@ -497,12 +518,14 @@ def test_rejects_full_day_activity_with_another_activity():
             "activities": [
                 {
                     "name": "Full-day tour",
+                    "activity_type": "guided_tour",
                     "description": "A full-day tour.",
                     "source_indices": [1],
                     "duration_type": "full_day",
                 },
                 {
                     "name": "Waterfall",
+                    "activity_type": "waterfall",
                     "description": "A waterfall visit.",
                     "source_indices": [2],
                     "duration_type": "short",
@@ -535,6 +558,7 @@ async def test_excludes_unverified_attractions(monkeypatch):
         ),
         {
             "name": "Unknown Park",
+            "activity_type": "other",
             "description": "Adventure park",
             "source_indices": [2],
             "location_status": LocationStatus.UNVERIFIED,
@@ -556,6 +580,7 @@ async def test_excludes_unverified_attractions(monkeypatch):
                     "activities": [
                         {
                             "name": "Verified Park",
+                            "activity_type": "other",
                             "description": "Adventure park",
                             "source_indices": [1],
                         }
@@ -603,6 +628,7 @@ async def test_rejects_trip_without_verified_attractions(monkeypatch):
     recommendations = [
         {
             "name": "Unknown Park",
+            "activity_type": "other",
             "source_indices": [1],
             "location_status": LocationStatus.UNVERIFIED,
             "latitude": None,
@@ -621,7 +647,6 @@ async def test_rejects_trip_without_verified_attractions(monkeypatch):
         )
 
 
-
 def test_rejects_three_half_day_activities():
     trip = TravelItinerary.model_validate({
         "destination": "Chiang Mai",
@@ -630,18 +655,21 @@ def test_rejects_three_half_day_activities():
             "activities": [
                 {
                     "name": "Zipline",
+                    "activity_type": "zipline",
                     "description": "Jungle ziplining.",
                     "source_indices": [1],
                     "duration_type": "half_day",
                 },
                 {
                     "name": "Elephant Sanctuary",
+                    "activity_type": "elephant_sanctuary",
                     "description": "Elephant sanctuary visit.",
                     "source_indices": [2],
                     "duration_type": "half_day",
                 },
                 {
                     "name": "Waterfall Tour",
+                    "activity_type": "waterfall",
                     "description": "Guided waterfall tour.",
                     "source_indices": [3],
                     "duration_type": "half_day",
@@ -664,12 +692,14 @@ def test_allows_two_half_day_activities():
             "activities": [
                 {
                     "name": "Zipline",
+                    "activity_type": "zipline",
                     "description": "Jungle ziplining.",
                     "source_indices": [1],
                     "duration_type": "half_day",
                 },
                 {
                     "name": "Elephant Sanctuary",
+                    "activity_type": "elephant_sanctuary",
                     "description": "Elephant sanctuary visit.",
                     "source_indices": [2],
                     "duration_type": "half_day",
@@ -729,6 +759,7 @@ async def test_retries_when_day_has_too_many_half_day_activities(
                     "activities": [
                         {
                             "name": name,
+                            "activity_type": "other",
                             "description": "Test activity.",
                             "source_indices": [
                                 int(name.split()[-1])
@@ -757,7 +788,6 @@ async def test_retries_when_day_has_too_many_half_day_activities(
     assert [len(day.activities) for day in trip.days] == [2, 1]
 
 
-
 @pytest.mark.anyio
 async def test_adds_total_driving_after_valid_trip(monkeypatch):
     preferences = TravelPreferences(
@@ -777,6 +807,7 @@ async def test_adds_total_driving_after_valid_trip(monkeypatch):
                 "day": 1,
                 "activities": [{
                     "name": "Test Park",
+                    "activity_type": "other",
                     "description": "A nature park.",
                     "source_indices": [1],
                 }],

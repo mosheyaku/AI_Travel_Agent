@@ -14,6 +14,7 @@ async def test_filters_unverified_recommendations(monkeypatch):
         AttractionRecommendation(
             name="Doi Inthanon National Park",
             category="nature",
+            activity_type="hiking",
             description="A national park with hiking trails.",
             relevance_reason="Matches nature interests.",
             source_indices=[1],
@@ -21,6 +22,7 @@ async def test_filters_unverified_recommendations(monkeypatch):
         AttractionRecommendation(
             name="Unknown Attraction",
             category="adventure",
+            activity_type="other",
             description="An unsupported attraction.",
             relevance_reason="Matches adventure interests.",
             source_indices=[2],
@@ -69,6 +71,7 @@ async def test_verification_removes_unsupported_activity(monkeypatch):
     recommendation = AttractionRecommendation(
         name="Sri Lanna National Park",
         category="nature",
+        activity_type="national_park",
         description="A national park offering waterfalls and white-water rafting.",
         relevance_reason="Matches nature interests.",
         source_indices=[1],
@@ -111,6 +114,7 @@ async def test_excludes_sources_about_unnamed_attractions(monkeypatch):
     recommendation = AttractionRecommendation(
         name="Elephant Nature Park",
         category="wildlife",
+        activity_type="elephant_sanctuary",
         description="An elephant sanctuary offering river rafting and elephant painting.",
         relevance_reason="Matches wildlife interests.",
         source_indices=[1, 2],
@@ -163,6 +167,7 @@ async def test_rejects_generic_attraction_collection(monkeypatch):
     recommendation = AttractionRecommendation(
         name="Zoo Attractions Chiang Mai",
         category="wildlife",
+        activity_type="zoo",
         description="A collection of zoos and animal parks.",
         relevance_reason="Matches wildlife interests.",
         source_indices=[1],

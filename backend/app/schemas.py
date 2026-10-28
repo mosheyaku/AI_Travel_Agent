@@ -18,6 +18,9 @@ AttractionCategory = Literal[
 class AttractionRecommendation(BaseModel):
     name: str = Field(description="Name of the attraction")
     category: AttractionCategory
+    activity_type: str = Field(
+    min_length=1,
+    description="Specific activity type in lowercase snake_case",)
     description: str = Field(description="Description based on the sources")
     relevance_reason: str = Field(
         description="Why this attraction matches the user's request"
@@ -63,6 +66,7 @@ class TravelPreferences(BaseModel):
 
 class ItineraryActivity(BaseModel):
     name: str = Field(min_length=1)
+    activity_type: str = Field(min_length=1)
     description: str
     source_indices: list[int] = Field(min_length=1)
 

@@ -8,6 +8,7 @@ def test_removes_duplicate_attractions_with_different_names():
         AttractionRecommendation(
             name="Skyline Adventure",
             category="adventure",
+            activity_type="zipline",
             description="Zipline experience.",
             relevance_reason="Matches adventure interests.",
             source_indices=[1],
@@ -15,6 +16,7 @@ def test_removes_duplicate_attractions_with_different_names():
         AttractionRecommendation(
             name="SKYLINE-ADVENTURE",
             category="adventure",
+            activity_type="zipline",
             description="Zipline experience.",
             relevance_reason="Matches adventure interests.",
             source_indices=[2],
@@ -22,6 +24,7 @@ def test_removes_duplicate_attractions_with_different_names():
         AttractionRecommendation(
             name="Doi Inthanon National Park",
             category="nature",
+            activity_type="hiking",
             description="Mountain hiking.",
             relevance_reason="Matches nature interests.",
             source_indices=[3],
@@ -41,6 +44,7 @@ def test_keeps_different_attractions():
         AttractionRecommendation(
             name="Elephant Nature Park",
             category="wildlife",
+            activity_type="elephant_sanctuary",
             description="Elephant sanctuary.",
             relevance_reason="Matches wildlife interests.",
             source_indices=[1],
@@ -48,6 +52,7 @@ def test_keeps_different_attractions():
         AttractionRecommendation(
             name="Elephant Nature",
             category="wildlife",
+            activity_type="other",
             description="A different attraction.",
             relevance_reason="Matches wildlife interests.",
             source_indices=[2],
