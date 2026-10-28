@@ -6,7 +6,6 @@ from app.recommendations import recommend_attractions
 from app.schemas import TravelPreferences
 from app.trip_planning import build_attraction_queries
 from app.trip_generator import generate_trip_plan
-from app.itinerary_routes import add_driving_routes
 
 app = FastAPI(
     title=settings.app_name,
@@ -85,8 +84,6 @@ async def generate_trip(
             preferences,
             attraction_data["recommendations"],
         )
-
-        trip_plan = await add_driving_routes(trip_plan)
 
         return {
             "trip": trip_plan.model_dump(),

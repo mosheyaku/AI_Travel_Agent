@@ -3,7 +3,7 @@ import httpx
 from app.google_routes import get_driving_route
 from app.location_validation import LocationStatus
 from app.schemas import ItineraryActivity, TravelItinerary
-
+MAX_DAILY_DRIVING_MINUTES = 90
 
 def has_verified_location(activity: ItineraryActivity) -> bool:
     """Check whether an activity has a verified Google location."""
@@ -60,3 +60,23 @@ async def add_driving_routes(trip: TravelItinerary) -> TravelItinerary:
             day.driving_duration_minutes = total_minutes
 
     return trip
+
+
+def find_driving_issues(
+    trip: TravelItinerary,
+    max_minutes: int = MAX_DAILY_DRIVING_MINUTES,
+) -> list[str]:
+    """Find days with excessive driving between attractions."""
+    issues = []
+
+    for day in trip.days:
+        duration = day.driving_duration_minutes
+
+        if duration is not None and duration > max_minutes:
+            issues.append(
+                f"Day {day.day}: driving between attractions "
+                f"takes {duration} minutes, exceeding "
+                f"the {max_minutes}-minute planning limit."
+            )
+
+    return issues

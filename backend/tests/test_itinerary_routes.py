@@ -124,3 +124,29 @@ async def test_keeps_trip_when_routes_api_fails(monkeypatch):
     assert len(result.days[0].activities) == 2
     assert result.days[0].driving_distance_km is None
     assert result.days[0].driving_duration_minutes is None
+
+
+def test_finds_excessive_driving():
+    trip = make_trip([
+        make_activity("A", 18.7, 98.9),
+        make_activity("B", 18.8, 98.9),
+    ])
+
+    trip.days[0].driving_duration_minutes = 110
+
+    issues = itinerary_routes.find_driving_issues(trip)
+
+    assert len(issues) == 1
+    assert "Day 1" in issues[0]
+    assert "110 minutes" in issues[0]
+
+
+def test_ignores_missing_driving_data():
+    trip = make_trip([
+        make_activity("A", 18.7, 98.9),
+        make_activity("B", 18.8, 98.9, verified=False),
+    ])
+
+    issues = itinerary_routes.find_driving_issues(trip)
+
+    assert issues == []
