@@ -14,6 +14,7 @@ from app.itinerary_distances import (
 from app.llm import generate_text
 from app.location_validation import LocationStatus
 from app.schemas import TravelItinerary, TravelPreferences
+from app.itinerary_routes import add_driving_routes, find_driving_issues
 
 
 MAX_GENERATION_ATTEMPTS = 2
@@ -69,6 +70,7 @@ def validate_trip_plan(
             activity.latitude = original.get("latitude")
             activity.longitude = original.get("longitude")
             activity.google_place_id = original.get("google_place_id")
+            activity.duration_type = original.get("duration_type", "unknown")
 
             seen_names.add(name)
 
@@ -113,11 +115,49 @@ def find_geographic_issues(
     return issues
 
 
+def find_activity_load_issues(trip: TravelItinerary) -> list[str]:
+    """Find days with incompatible full-day activities."""
+    issues = []
+
+    for day in trip.days:
+        full_day_activities = [
+            activity.name
+            for activity in day.activities
+            if activity.duration_type == "full_day"
+        ]
+
+        if full_day_activities and len(day.activities) > 1:
+            issues.append(
+                f"Day {day.day}: full-day activity "
+                f"({', '.join(full_day_activities)}) "
+                "is scheduled with other activities."
+            )
+
+    return issues
+
+
 async def generate_trip_plan(
     preferences: TravelPreferences,
     recommendations: list[dict],
 ) -> TravelItinerary:
     """Generate and geographically validate a daily trip plan."""
+
+    verified_recommendations = [
+        recommendation
+        for recommendation in recommendations
+        if recommendation.get("location_status") == LocationStatus.VERIFIED
+        and recommendation.get("latitude") is not None
+        and recommendation.get("longitude") is not None
+        and recommendation.get("google_place_id")
+    ]
+
+    if not verified_recommendations:
+        raise ValueError(
+            "No attractions with verified locations are available."
+        )
+
+    recommendations = verified_recommendations
+
     attractions_text = json.dumps(
         recommendations,
         ensure_ascii=False,
@@ -175,6 +215,7 @@ Requirements:
 - Geographic groups are planning suggestions, not mandatory activity bundles.
 - Do not invent driving times or travel distances.
 - Return valid JSON only, without Markdown fences.
+- Prefer daily plans with no more than 90 minutes of driving between attractions.
 
 JSON structure:
 {{
@@ -194,6 +235,7 @@ JSON structure:
 }}
 """
 
+    
     for attempt in range(MAX_GENERATION_ATTEMPTS):
         response_text = await generate_text(prompt)
 
@@ -208,24 +250,33 @@ JSON structure:
 
         validate_trip_plan(trip, preferences, recommendations)
 
-        issues = find_geographic_issues(trip)
+        geographic_issues = find_geographic_issues(trip)
+        activity_issues = find_activity_load_issues(trip)
+
+        # Avoid unnecessary API calls when geographic validation fails.
+        if geographic_issues or activity_issues:
+            issues = geographic_issues + activity_issues
+        else:
+            trip = await add_driving_routes(trip)
+            issues = find_driving_issues(trip)
 
         if not issues:
             return trip
 
         if attempt == MAX_GENERATION_ATTEMPTS - 1:
             raise ValueError(
-                "The trip plan failed geographic validation: "
+                "The trip plan failed route validation: "
                 + "; ".join(issues)
             )
 
         prompt += (
-            "\n\nThe previous itinerary had geographic problems:\n"
+            "\n\nThe previous itinerary had planning problems:\n"
             + "\n".join(issues)
             + "\nGenerate a corrected itinerary."
-            + "\nKeep verified attractions within "
-            + f"{MAX_CLUSTER_DISTANCE_KM} km straight-line "
-            + "of one another when scheduled on the same day."
+            + "\nRearrange attractions across days or change their order "
+            + "to reduce driving while respecting geographic constraints."
+            + "\nUse only the provided attractions and preserve their "
+            + "source indices."
             + "\nReturn the complete corrected JSON itinerary."
         )
 
