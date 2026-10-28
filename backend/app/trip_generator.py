@@ -70,6 +70,7 @@ def validate_trip_plan(
             activity.latitude = original.get("latitude")
             activity.longitude = original.get("longitude")
             activity.google_place_id = original.get("google_place_id")
+            activity.duration_type = original.get("duration_type", "unknown")
 
             seen_names.add(name)
 
@@ -109,6 +110,27 @@ def find_geographic_issues(
             issues.append(
                 f"Day {day.day}: {names} "
                 f"are spread across {distance} km straight-line."
+            )
+
+    return issues
+
+
+def find_activity_load_issues(trip: TravelItinerary) -> list[str]:
+    """Find days with incompatible full-day activities."""
+    issues = []
+
+    for day in trip.days:
+        full_day_activities = [
+            activity.name
+            for activity in day.activities
+            if activity.duration_type == "full_day"
+        ]
+
+        if full_day_activities and len(day.activities) > 1:
+            issues.append(
+                f"Day {day.day}: full-day activity "
+                f"({', '.join(full_day_activities)}) "
+                "is scheduled with other activities."
             )
 
     return issues
@@ -212,10 +234,11 @@ JSON structure:
         validate_trip_plan(trip, preferences, recommendations)
 
         geographic_issues = find_geographic_issues(trip)
+        activity_issues = find_activity_load_issues(trip)
 
         # Avoid unnecessary API calls when geographic validation fails.
-        if geographic_issues:
-            issues = geographic_issues
+        if geographic_issues or activity_issues:
+            issues = geographic_issues + activity_issues
         else:
             trip = await add_driving_routes(trip)
             issues = find_driving_issues(trip)

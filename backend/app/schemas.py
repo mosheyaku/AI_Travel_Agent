@@ -32,6 +32,7 @@ class AttractionRecommendation(BaseModel):
     longitude: float | None = None
     distance_km: float | None = None
     google_place_id: str | None = None
+    duration_type: Literal["short", "half_day", "full_day", "unknown"] = "unknown"
 
 
 class AttractionRecommendations(BaseModel):
@@ -69,6 +70,7 @@ class ItineraryActivity(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     google_place_id: str | None = None
+    duration_type: Literal["short", "half_day", "full_day", "unknown"] = "unknown"
 
 
 class ItineraryDay(BaseModel):

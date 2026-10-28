@@ -1,10 +1,10 @@
-
 import json
 
 import pytest
 
 from app import trip_generator
-from app.schemas import TravelPreferences
+from app.schemas import TravelPreferences, TravelItinerary
+from app.trip_generator import find_activity_load_issues
 
 
 @pytest.mark.anyio
@@ -411,3 +411,31 @@ async def test_includes_attraction_distances_in_prompt(monkeypatch):
     assert '"from": "Attraction A"' in prompt
     assert '"to": "Attraction B"' in prompt
     assert '"distance_km":' in prompt
+
+
+def test_rejects_full_day_activity_with_another_activity():
+    trip = TravelItinerary.model_validate({
+        "destination": "Chiang Mai",
+        "days": [{
+            "day": 1,
+            "activities": [
+                {
+                    "name": "Full-day tour",
+                    "description": "A full-day tour.",
+                    "source_indices": [1],
+                    "duration_type": "full_day",
+                },
+                {
+                    "name": "Waterfall",
+                    "description": "A waterfall visit.",
+                    "source_indices": [2],
+                    "duration_type": "short",
+                },
+            ],
+        }],
+    })
+
+    issues = find_activity_load_issues(trip)
+
+    assert len(issues) == 1
+    assert "full-day" in issues[0]

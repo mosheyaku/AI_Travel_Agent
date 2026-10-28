@@ -75,6 +75,7 @@ Return a JSON object with this exact structure:
     {{
       "name": "Attraction name",
       "category": "adventure",
+      "duration_type": "unknown",
       "description": "Description supported by the sources",
       "relevance_reason": "Why it matches the user's request",
       "source_indices": [1]
@@ -111,6 +112,12 @@ Requirements:
 - Return valid JSON only, without Markdown fences.
 - Reject category pages, collections of attractions, and generic
   attraction labels that do not identify one specific visitable place.
+- Classify duration_type as short, half_day, full_day, or unknown.
+- Use short only when the sources indicate an activity lasting up to about 2 hours.
+- Use half_day only when the sources indicate an activity lasting several hours.
+- Use full_day only when the sources explicitly describe a full-day activity.
+- If the duration is not supported by the sources, use unknown.
+- Never infer duration_type from the attraction category alone.
 """
 
         valid_indices = {index for index, _ in query_sources}
