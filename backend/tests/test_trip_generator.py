@@ -619,3 +619,139 @@ async def test_rejects_trip_without_verified_attractions(monkeypatch):
             preferences,
             recommendations,
         )
+
+
+
+def test_rejects_three_half_day_activities():
+    trip = TravelItinerary.model_validate({
+        "destination": "Chiang Mai",
+        "days": [{
+            "day": 1,
+            "activities": [
+                {
+                    "name": "Zipline",
+                    "description": "Jungle ziplining.",
+                    "source_indices": [1],
+                    "duration_type": "half_day",
+                },
+                {
+                    "name": "Elephant Sanctuary",
+                    "description": "Elephant sanctuary visit.",
+                    "source_indices": [2],
+                    "duration_type": "half_day",
+                },
+                {
+                    "name": "Waterfall Tour",
+                    "description": "Guided waterfall tour.",
+                    "source_indices": [3],
+                    "duration_type": "half_day",
+                },
+            ],
+        }],
+    })
+
+    issues = find_activity_load_issues(trip)
+
+    assert len(issues) == 1
+    assert "too many half-day activities" in issues[0]
+
+
+def test_allows_two_half_day_activities():
+    trip = TravelItinerary.model_validate({
+        "destination": "Chiang Mai",
+        "days": [{
+            "day": 1,
+            "activities": [
+                {
+                    "name": "Zipline",
+                    "description": "Jungle ziplining.",
+                    "source_indices": [1],
+                    "duration_type": "half_day",
+                },
+                {
+                    "name": "Elephant Sanctuary",
+                    "description": "Elephant sanctuary visit.",
+                    "source_indices": [2],
+                    "duration_type": "half_day",
+                },
+            ],
+        }],
+    })
+
+    issues = find_activity_load_issues(trip)
+
+    assert issues == []
+
+
+@pytest.mark.anyio
+async def test_retries_when_day_has_too_many_half_day_activities(
+    monkeypatch,
+    mock_driving_routes,
+):
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=2,
+        interests=["adventure", "nature"],
+        pace="active",
+    )
+
+    recommendations = [
+        verified_attraction(
+            f"Attraction {index}",
+            index,
+            duration_type="half_day",
+        )
+        for index in range(1, 4)
+    ]
+
+    generated_plans = [
+        [
+            ["Attraction 1", "Attraction 2", "Attraction 3"],
+            [],
+        ],
+        [
+            ["Attraction 1", "Attraction 2"],
+            ["Attraction 3"],
+        ],
+    ]
+
+    prompts = []
+
+    async def fake_generate_text(prompt: str) -> str:
+        prompts.append(prompt)
+        plan = generated_plans[len(prompts) - 1]
+
+        return json.dumps({
+            "destination": "Chiang Mai, Thailand",
+            "days": [
+                {
+                    "day": day_number,
+                    "activities": [
+                        {
+                            "name": name,
+                            "description": "Test activity.",
+                            "source_indices": [
+                                int(name.split()[-1])
+                            ],
+                        }
+                        for name in names
+                    ],
+                }
+                for day_number, names in enumerate(plan, start=1)
+            ],
+        })
+
+    monkeypatch.setattr(
+        trip_generator,
+        "generate_text",
+        fake_generate_text,
+    )
+
+    trip = await trip_generator.generate_trip_plan(
+        preferences,
+        recommendations,
+    )
+
+    assert len(prompts) == 2
+    assert "too many half-day activities" in prompts[1]
+    assert [len(day.activities) for day in trip.days] == [2, 1]
