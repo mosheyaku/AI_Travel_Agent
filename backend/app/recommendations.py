@@ -75,6 +75,7 @@ Return a JSON object with this exact structure:
     {{
       "name": "Attraction name",
       "category": "adventure",
+      "activity_type": "zipline",
       "duration_type": "unknown",
       "description": "Description supported by the sources",
       "relevance_reason": "Why it matches the user's request",
@@ -118,6 +119,15 @@ Requirements:
 - Use full_day only when the sources explicitly describe a full-day activity.
 - If the duration is not supported by the sources, use unknown.
 - Never infer duration_type from the attraction category alone.
+- Assign one specific activity_type to each attraction.
+- Use lowercase snake_case for activity_type.
+- Describe the primary visitor experience, not the attraction's name.
+- Use the same activity_type for different providers offering essentially
+  the same experience.
+- Examples: zipline, elephant_sanctuary, rafting, hiking, waterfall,
+  water_park, safari, temple, cooking_class.
+- Do not create provider-specific activity types.
+- Do not invent an activity type unsupported by the sources.
 """
 
         valid_indices = {index for index, _ in query_sources}

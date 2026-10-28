@@ -1,3 +1,4 @@
+
 import pytest
 
 from app.itinerary_distances import calculate_day_max_distance, build_attraction_distances
@@ -10,6 +11,7 @@ def test_calculates_maximum_distance():
         activities=[
             ItineraryActivity(
                 name="Attraction A",
+                activity_type="other",
                 description="First attraction",
                 source_indices=[1],
                 latitude=18.7883,
@@ -17,6 +19,7 @@ def test_calculates_maximum_distance():
             ),
             ItineraryActivity(
                 name="Attraction B",
+                activity_type="other",
                 description="Second attraction",
                 source_indices=[2],
                 latitude=18.7900,
@@ -24,6 +27,7 @@ def test_calculates_maximum_distance():
             ),
             ItineraryActivity(
                 name="Attraction C",
+                activity_type="other",
                 description="Third attraction",
                 source_indices=[3],
                 latitude=19.2000,
@@ -44,6 +48,7 @@ def test_returns_none_for_single_attraction():
         activities=[
             ItineraryActivity(
                 name="Attraction A",
+                activity_type="other",
                 description="First attraction",
                 source_indices=[1],
                 latitude=18.7883,
@@ -61,6 +66,7 @@ def test_ignores_attractions_without_coordinates():
         activities=[
             ItineraryActivity(
                 name="Attraction A",
+                activity_type="other",
                 description="First attraction",
                 source_indices=[1],
                 latitude=18.7883,
@@ -68,6 +74,7 @@ def test_ignores_attractions_without_coordinates():
             ),
             ItineraryActivity(
                 name="Attraction B",
+                activity_type="other",
                 description="Unknown location",
                 source_indices=[2],
             ),
@@ -83,6 +90,7 @@ def test_returns_zero_for_same_location():
         activities=[
             ItineraryActivity(
                 name="Attraction A",
+                activity_type="other",
                 description="First attraction",
                 source_indices=[1],
                 latitude=18.7883,
@@ -90,6 +98,7 @@ def test_returns_zero_for_same_location():
             ),
             ItineraryActivity(
                 name="Attraction B",
+                activity_type="other",
                 description="Second attraction",
                 source_indices=[2],
                 latitude=18.7883,
@@ -99,7 +108,6 @@ def test_returns_zero_for_same_location():
     )
 
     assert calculate_day_max_distance(day) == 0.0
-
 
 
 def test_builds_distances_between_verified_attractions():

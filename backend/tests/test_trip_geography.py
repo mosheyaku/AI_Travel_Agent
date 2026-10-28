@@ -1,4 +1,3 @@
-
 from app.schemas import TravelItinerary
 from app.trip_generator import find_geographic_issues
 
@@ -11,6 +10,7 @@ def test_detects_distant_activities_on_same_day():
             "activities": [
                 {
                     "name": "Park A",
+                    "activity_type": "nature_park",
                     "description": "Nature park",
                     "source_indices": [1],
                     "location_status": "verified",
@@ -20,6 +20,7 @@ def test_detects_distant_activities_on_same_day():
                 },
                 {
                     "name": "Mountain B",
+                    "activity_type": "hiking",
                     "description": "Mountain park",
                     "source_indices": [2],
                     "location_status": "verified",
@@ -45,6 +46,7 @@ def test_accepts_nearby_activities():
             "activities": [
                 {
                     "name": "Park A",
+                    "activity_type": "nature_park",
                     "description": "Nature park",
                     "source_indices": [1],
                     "location_status": "verified",
@@ -54,6 +56,7 @@ def test_accepts_nearby_activities():
                 },
                 {
                     "name": "Dam B",
+                    "activity_type": "other",
                     "description": "Nearby dam",
                     "source_indices": [2],
                     "location_status": "verified",
