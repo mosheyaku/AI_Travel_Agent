@@ -755,3 +755,70 @@ async def test_retries_when_day_has_too_many_half_day_activities(
     assert len(prompts) == 2
     assert "too many half-day activities" in prompts[1]
     assert [len(day.activities) for day in trip.days] == [2, 1]
+
+
+
+@pytest.mark.anyio
+async def test_adds_total_driving_after_valid_trip(monkeypatch):
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=1,
+        interests=["nature"],
+    )
+
+    recommendations = [
+        verified_attraction("Test Park", 1),
+    ]
+
+    async def fake_generate_text(prompt):
+        return json.dumps({
+            "destination": "Chiang Mai, Thailand",
+            "days": [{
+                "day": 1,
+                "activities": [{
+                    "name": "Test Park",
+                    "description": "A nature park.",
+                    "source_indices": [1],
+                }],
+            }],
+        })
+
+    async def fake_find_trip_origin(destination):
+        return (18.7883, 98.9853)
+
+    async def fake_add_total_driving_routes(
+        trip,
+        origin_latitude,
+        origin_longitude,
+    ):
+        assert origin_latitude == 18.7883
+        assert origin_longitude == 98.9853
+
+        trip.days[0].total_driving_distance_km = 50.0
+        trip.days[0].total_driving_duration_minutes = 80
+        return trip
+
+    monkeypatch.setattr(
+        trip_generator,
+        "generate_text",
+        fake_generate_text,
+    )
+    monkeypatch.setattr(
+        trip_generator,
+        "find_trip_origin",
+        fake_find_trip_origin,
+    )
+    monkeypatch.setattr(
+        trip_generator,
+        "add_total_driving_routes",
+        fake_add_total_driving_routes,
+    )
+
+    trip = await trip_generator.generate_trip_plan(
+        preferences,
+        recommendations,
+    )
+
+    assert trip.days[0].total_driving_distance_km == 50.0
+    assert trip.days[0].total_driving_duration_minutes == 80
+    assert trip.days[0].driving_duration_minutes is None
