@@ -86,3 +86,52 @@ def find_driving_issues(
             )
 
     return issues
+
+
+async def add_total_driving_routes(
+    trip: TravelItinerary,
+    origin_latitude: float,
+    origin_longitude: float,
+) -> TravelItinerary:
+    """Calculate daily round-trip driving from an estimated city center."""
+
+    for day in trip.days:
+        if not day.activities:
+            continue
+
+        if not all(has_verified_location(activity) for activity in day.activities):
+            continue
+
+        points = [
+            (origin_latitude, origin_longitude),
+            *[
+                (activity.latitude, activity.longitude)
+                for activity in day.activities
+            ],
+            (origin_latitude, origin_longitude),
+        ]
+
+        total_distance = 0.0
+        total_minutes = 0
+
+        for origin, destination in zip(points, points[1:]):
+            try:
+                route = await get_driving_route(
+                    origin[0],
+                    origin[1],
+                    destination[0],
+                    destination[1],
+                )
+            except (httpx.HTTPError, ValueError, KeyError, TypeError):
+                break
+
+            if route is None:
+                break
+
+            total_distance += route.distance_km
+            total_minutes += route.duration_minutes
+        else:
+            day.total_driving_distance_km = round(total_distance, 1)
+            day.total_driving_duration_minutes = total_minutes
+
+    return trip

@@ -177,3 +177,114 @@ async def test_marks_excessive_driving(monkeypatch):
 
     assert result.days[0].driving_status == "exceeds_limit"
     assert result.days[0].driving_duration_minutes == 120
+
+
+
+@pytest.mark.anyio
+async def test_total_driving_for_single_activity(monkeypatch):
+    calls = []
+
+    async def fake_get_driving_route(*coordinates):
+        calls.append(coordinates)
+        return DrivingRoute(
+            distance_km=25.0,
+            duration_minutes=40,
+        )
+
+    monkeypatch.setattr(
+        itinerary_routes,
+        "get_driving_route",
+        fake_get_driving_route,
+    )
+
+    trip = make_trip([
+        make_activity("A", 18.7, 98.9),
+    ])
+
+    result = await itinerary_routes.add_total_driving_routes(
+        trip,
+        origin_latitude=18.7883,
+        origin_longitude=98.9853,
+    )
+
+    assert calls == [
+        (18.7883, 98.9853, 18.7, 98.9),
+        (18.7, 98.9, 18.7883, 98.9853),
+    ]
+
+    assert result.days[0].total_driving_distance_km == 50.0
+    assert result.days[0].total_driving_duration_minutes == 80
+
+    # Existing between-attractions fields remain unchanged.
+    assert result.days[0].driving_duration_minutes is None
+
+
+@pytest.mark.anyio
+async def test_total_driving_for_multiple_activities(monkeypatch):
+    calls = []
+
+    async def fake_get_driving_route(*coordinates):
+        calls.append(coordinates)
+        return DrivingRoute(
+            distance_km=10.0,
+            duration_minutes=15,
+        )
+
+    monkeypatch.setattr(
+        itinerary_routes,
+        "get_driving_route",
+        fake_get_driving_route,
+    )
+
+    trip = make_trip([
+        make_activity("A", 18.7, 98.9),
+        make_activity("B", 18.8, 98.9),
+    ])
+
+    result = await itinerary_routes.add_total_driving_routes(
+        trip,
+        origin_latitude=18.7883,
+        origin_longitude=98.9853,
+    )
+
+    assert len(calls) == 3
+    assert result.days[0].total_driving_distance_km == 30.0
+    assert result.days[0].total_driving_duration_minutes == 45
+
+
+@pytest.mark.anyio
+async def test_total_driving_remains_unknown_when_api_fails(monkeypatch):
+    calls = 0
+
+    async def fake_get_driving_route(*coordinates):
+        nonlocal calls
+        calls += 1
+
+        if calls == 2:
+            raise httpx.ConnectError("Google Routes unavailable")
+
+        return DrivingRoute(
+            distance_km=10.0,
+            duration_minutes=15,
+        )
+
+    monkeypatch.setattr(
+        itinerary_routes,
+        "get_driving_route",
+        fake_get_driving_route,
+    )
+
+    trip = make_trip([
+        make_activity("A", 18.7, 98.9),
+        make_activity("B", 18.8, 98.9),
+    ])
+
+    result = await itinerary_routes.add_total_driving_routes(
+        trip,
+        origin_latitude=18.7883,
+        origin_longitude=98.9853,
+    )
+
+    assert calls == 2
+    assert result.days[0].total_driving_distance_km is None
+    assert result.days[0].total_driving_duration_minutes is None

@@ -14,8 +14,11 @@ from app.itinerary_distances import (
 from app.llm import generate_text
 from app.location_validation import LocationStatus
 from app.schemas import TravelItinerary, TravelPreferences
-from app.itinerary_routes import add_driving_routes, find_driving_issues
+from app.itinerary_routes import add_driving_routes, find_driving_issues, add_total_driving_routes
+import httpx
 
+from app.geocoding import search_locations
+from app.attraction_locations import find_destination
 
 MAX_GENERATION_ATTEMPTS = 2
 
@@ -150,6 +153,24 @@ def find_activity_load_issues(trip: TravelItinerary) -> list[str]:
     return issues
 
 
+async def find_trip_origin(
+    destination: str,
+) -> tuple[float, float] | None:
+    """Find an approximate starting point for the destination."""
+
+    try:
+        candidates = await search_locations(destination, "")
+    except (httpx.HTTPError, TimeoutError):
+        return None
+
+    location = find_destination(destination, candidates)
+
+    if location is None:
+        return None
+
+    return location.latitude, location.longitude
+
+
 async def generate_trip_plan(
     preferences: TravelPreferences,
     recommendations: list[dict],
@@ -275,6 +296,15 @@ JSON structure:
             issues = find_driving_issues(trip)
 
         if not issues:
+            origin = await find_trip_origin(preferences.destination)
+            
+            if origin is not None:
+                trip = await add_total_driving_routes(
+                    trip,
+                    origin_latitude=origin[0],
+                    origin_longitude=origin[1],
+                )
+            
             return trip
 
         if attempt == MAX_GENERATION_ATTEMPTS - 1:
