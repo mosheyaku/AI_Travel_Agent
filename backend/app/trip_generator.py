@@ -115,8 +115,9 @@ def find_geographic_issues(
     return issues
 
 
+
 def find_activity_load_issues(trip: TravelItinerary) -> list[str]:
-    """Find days with incompatible full-day activities."""
+    """Find days with incompatible activity durations."""
     issues = []
 
     for day in trip.days:
@@ -131,6 +132,19 @@ def find_activity_load_issues(trip: TravelItinerary) -> list[str]:
                 f"Day {day.day}: full-day activity "
                 f"({', '.join(full_day_activities)}) "
                 "is scheduled with other activities."
+            )
+            continue
+
+        half_day_activities = [
+            activity.name
+            for activity in day.activities
+            if activity.duration_type == "half_day"
+        ]
+
+        if len(half_day_activities) > 2:
+            issues.append(
+                f"Day {day.day}: too many half-day activities "
+                f"({', '.join(half_day_activities)})."
             )
 
     return issues
