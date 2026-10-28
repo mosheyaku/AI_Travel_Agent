@@ -293,6 +293,15 @@ async def test_rejects_different_google_place_name(monkeypatch):
         fake_search_google_places,
     )
 
+    async def fake_match_place_with_llm(
+        attraction_name,
+        destination,
+        places,
+    ):
+        return None
+        
+    monkeypatch.setattr(attraction_locations,"match_place_with_llm",fake_match_place_with_llm,)
+
     result = await attraction_locations.validate_attraction_locations(
         [recommendation],
         "Chiang Mai, Thailand",
@@ -371,7 +380,7 @@ async def test_verifies_attraction_using_alternative_name(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_stops_searching_after_first_match(monkeypatch):
+async def test_searches_all_alternative_names(monkeypatch):
     recommendation = make_recommendation(
         "Sticky Waterfall (Bua Thong Waterfall)"
     )
@@ -416,7 +425,7 @@ async def test_stops_searching_after_first_match(monkeypatch):
         "Chiang Mai, Thailand",
     )
 
-    assert searched_names == ["Sticky Waterfall"]
+    assert searched_names == ["Sticky Waterfall", "Bua Thong Waterfall",]
     assert len(result) == 1
     assert result[0].location_status == LocationStatus.VERIFIED
 

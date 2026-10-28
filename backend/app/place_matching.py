@@ -48,18 +48,27 @@ KNOWN_PLACE_ALIASES = {
 
 
 def names_match_or_alias(expected: str, actual: str) -> bool:
-    """Match exact names or explicitly approved place aliases."""
-    if names_match(expected, actual):
+    """Match place names with safe normalization or approved aliases."""
+    expected_name = normalize_for_matching(expected)
+    actual_name = normalize_for_matching(actual)
+
+    if expected_name == actual_name:
         return True
 
-    normalized_expected = normalize_place_name(expected)
-    normalized_actual = normalize_place_name(actual)
+    # Accept a location qualifier appended in parentheses.
+    actual_without_parentheses = re.sub(
+        r"\s*\([^)]*\)\s*$",
+        "",
+        actual,
+    ).strip()
 
-    return normalized_actual in KNOWN_PLACE_ALIASES.get(
-        normalized_expected,
+    if expected_name == normalize_for_matching(actual_without_parentheses):
+        return True
+
+    return normalize_place_name(actual) in KNOWN_PLACE_ALIASES.get(
+        normalize_place_name(expected),
         set(),
     )
-
 
 NATURE_ACTIVITY_CATEGORIES = {
     "adventure",
@@ -99,3 +108,16 @@ def is_suspicious_activity_location(
         is_outdoor_activity
         and distance_km < URBAN_LOCATION_THRESHOLD_KM
     )
+
+
+def normalize_for_matching(name: str) -> str:
+    normalized = normalize_place_name(name)
+
+    words = normalized.split()
+
+    if words and words[0] == "the":
+        words = words[1:]
+
+    words = [word for word in words if word != "and"]
+
+    return " ".join(words)
