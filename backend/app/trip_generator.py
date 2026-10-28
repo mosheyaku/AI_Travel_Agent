@@ -14,6 +14,7 @@ from app.itinerary_distances import (
 from app.llm import generate_text
 from app.location_validation import LocationStatus
 from app.schemas import TravelItinerary, TravelPreferences
+from app.itinerary_routes import add_driving_routes, find_driving_issues
 
 
 MAX_GENERATION_ATTEMPTS = 2
@@ -175,6 +176,7 @@ Requirements:
 - Geographic groups are planning suggestions, not mandatory activity bundles.
 - Do not invent driving times or travel distances.
 - Return valid JSON only, without Markdown fences.
+- Prefer daily plans with no more than 90 minutes of driving between attractions.
 
 JSON structure:
 {{
@@ -194,6 +196,7 @@ JSON structure:
 }}
 """
 
+    
     for attempt in range(MAX_GENERATION_ATTEMPTS):
         response_text = await generate_text(prompt)
 
@@ -208,24 +211,32 @@ JSON structure:
 
         validate_trip_plan(trip, preferences, recommendations)
 
-        issues = find_geographic_issues(trip)
+        geographic_issues = find_geographic_issues(trip)
+
+        # Avoid unnecessary API calls when geographic validation fails.
+        if geographic_issues:
+            issues = geographic_issues
+        else:
+            trip = await add_driving_routes(trip)
+            issues = find_driving_issues(trip)
 
         if not issues:
             return trip
 
         if attempt == MAX_GENERATION_ATTEMPTS - 1:
             raise ValueError(
-                "The trip plan failed geographic validation: "
+                "The trip plan failed route validation: "
                 + "; ".join(issues)
             )
 
         prompt += (
-            "\n\nThe previous itinerary had geographic problems:\n"
+            "\n\nThe previous itinerary had planning problems:\n"
             + "\n".join(issues)
             + "\nGenerate a corrected itinerary."
-            + "\nKeep verified attractions within "
-            + f"{MAX_CLUSTER_DISTANCE_KM} km straight-line "
-            + "of one another when scheduled on the same day."
+            + "\nRearrange attractions across days or change their order "
+            + "to reduce driving while respecting geographic constraints."
+            + "\nUse only the provided attractions and preserve their "
+            + "source indices."
             + "\nReturn the complete corrected JSON itinerary."
         )
 
