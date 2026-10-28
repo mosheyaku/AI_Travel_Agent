@@ -1,4 +1,3 @@
-
 import pytest
 from pydantic import ValidationError
 
@@ -9,6 +8,7 @@ def make_recommendation(name: str, category: str = "culture") -> dict:
     return {
         "name": name,
         "category": category,
+        "activity_type": "temple",
         "description": "A historical attraction.",
         "relevance_reason": "Matches the user's request.",
         "source_indices": [1],
@@ -104,6 +104,7 @@ def test_accepts_valid_itinerary():
                     "activities": [
                         {
                             "name": "Skyline Adventure",
+                            "activity_type": "zipline",
                             "description": "Ziplining through the jungle.",
                             "source_indices": [1],
                         }
@@ -116,3 +117,4 @@ def test_accepts_valid_itinerary():
     assert itinerary.destination == "Chiang Mai, Thailand"
     assert itinerary.days[0].day == 1
     assert itinerary.days[0].activities[0].name == "Skyline Adventure"
+    assert itinerary.days[0].activities[0].activity_type == "zipline"

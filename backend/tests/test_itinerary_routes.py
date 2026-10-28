@@ -21,6 +21,7 @@ def make_trip(activities):
 def make_activity(name, latitude, longitude, verified=True):
     return {
         "name": name,
+        "activity_type": "other",
         "description": "Test attraction.",
         "source_indices": [1],
         "location_status": "verified" if verified else "unverified",
@@ -177,7 +178,6 @@ async def test_marks_excessive_driving(monkeypatch):
 
     assert result.days[0].driving_status == "exceeds_limit"
     assert result.days[0].driving_duration_minutes == 120
-
 
 
 @pytest.mark.anyio
