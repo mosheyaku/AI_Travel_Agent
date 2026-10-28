@@ -77,11 +77,17 @@ class ItineraryDay(BaseModel):
     day: int = Field(ge=1)
     activities: list[ItineraryActivity]
     max_distance_km: float | None = None
+
+    # Driving between consecutive attractions only.
     driving_distance_km: float | None = None
     driving_duration_minutes: int | None = None
     driving_status: Literal[
         "verified", "exceeds_limit", "unknown"
     ] = "unknown"
+
+    # Round-trip driving from the destination city center.
+    total_driving_distance_km: float | None = None
+    total_driving_duration_minutes: int | None = None
     
 
 class TravelItinerary(BaseModel):
