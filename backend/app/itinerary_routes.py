@@ -58,7 +58,13 @@ async def add_driving_routes(trip: TravelItinerary) -> TravelItinerary:
         if all_routes_available:
             day.driving_distance_km = round(total_distance, 1)
             day.driving_duration_minutes = total_minutes
-
+            
+            if total_minutes > MAX_DAILY_DRIVING_MINUTES:
+                day.driving_status = "exceeds_limit"
+            else:
+                day.driving_status = "verified"
+        else:
+            day.driving_status = "unknown"
     return trip
 
 
