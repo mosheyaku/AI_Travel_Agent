@@ -4,6 +4,7 @@ import pytest
 
 from app import trip_generator
 from app.schemas import TravelPreferences
+from app.location_validation import LocationStatus
 
 
 @pytest.mark.anyio
@@ -20,10 +21,13 @@ async def test_retries_when_driving_time_is_too_long(monkeypatch):
             "name": name,
             "description": "Nature attraction",
             "source_indices": [index],
-        }
-        for index, name in enumerate(["A", "B"], start=1)
+            "location_status": LocationStatus.VERIFIED,
+            "latitude": 18.7 + index * 0.001,
+            "longitude": 98.9,
+            "google_place_id": f"test-place-{index}",
+            }
+            for index, name in enumerate(["A", "B"], start=1)
     ]
-
     prompts = []
 
     async def fake_generate_text(prompt):

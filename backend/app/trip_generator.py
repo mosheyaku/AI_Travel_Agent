@@ -141,6 +141,23 @@ async def generate_trip_plan(
     recommendations: list[dict],
 ) -> TravelItinerary:
     """Generate and geographically validate a daily trip plan."""
+
+    verified_recommendations = [
+        recommendation
+        for recommendation in recommendations
+        if recommendation.get("location_status") == LocationStatus.VERIFIED
+        and recommendation.get("latitude") is not None
+        and recommendation.get("longitude") is not None
+        and recommendation.get("google_place_id")
+    ]
+
+    if not verified_recommendations:
+        raise ValueError(
+            "No attractions with verified locations are available."
+        )
+
+    recommendations = verified_recommendations
+
     attractions_text = json.dumps(
         recommendations,
         ensure_ascii=False,

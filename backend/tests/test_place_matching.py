@@ -1,3 +1,4 @@
+import pytest
 from app.place_matching import is_suspicious_activity_location, names_match, is_likely_office, names_match_or_alias
 
 def test_names_match_ignores_case():
@@ -77,3 +78,27 @@ def test_does_not_flag_urban_cultural_attraction():
         "culture",
         0.5,
     )
+
+
+@pytest.mark.parametrize(
+    "expected, actual",
+    [
+        ("Skyline Adventure", "Skyline Adventure (ดอยสะเก็ด)"),
+        ("The Sri Lanna National Park", "Sri Lanna National Park"),
+        ("Chiang Mai Zoo and Aquarium", "Chiang Mai Zoo Aquarium"),
+    ],
+)
+def test_matches_minor_place_name_variations(expected, actual):
+    assert names_match_or_alias(expected, actual)
+
+
+@pytest.mark.parametrize(
+    "expected, actual",
+    [
+        ("Monk's Trail", "Monks Trailhead (Ticket Counter)"),
+        ("Monthathan Waterfall", "Montha Than Waterfall Trailhead"),
+        ("Skyline Adventure", "Skyline Adventure Travel Agency"),
+    ],
+)
+def test_rejects_different_or_ambiguous_places(expected, actual):
+    assert not names_match_or_alias(expected, actual)
