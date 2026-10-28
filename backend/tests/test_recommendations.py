@@ -132,6 +132,7 @@ async def test_retries_after_invalid_source_index(monkeypatch):
                     {
                         "name": "Skyline Adventure",
                         "category": "adventure",
+                        "activity_type": "zipline",
                         "description": "Ziplining through the jungle.",
                         "relevance_reason": "Matches the user's interests.",
                         "source_indices": [source_index],
@@ -177,6 +178,7 @@ async def test_keeps_valid_recommendations_when_some_are_invalid(monkeypatch):
                     {
                         "name": "Skyline Adventure",
                         "category": "adventure",
+                        "activity_type": "zipline",
                         "description": "Ziplining through the jungle.",
                         "relevance_reason": "Matches adventure interests.",
                         "source_indices": [1],
@@ -184,6 +186,7 @@ async def test_keeps_valid_recommendations_when_some_are_invalid(monkeypatch):
                     {
                         "name": "Unknown Attraction",
                         "category": "adventure",
+                        "activity_type": "other",
                         "description": "An unsupported attraction.",
                         "relevance_reason": "Matches adventure interests.",
                         "source_indices": [99],
@@ -251,6 +254,7 @@ async def test_merges_search_results_without_duplicate_urls(monkeypatch):
                 {
                     "name": "Chiang Mai Ziplining",
                     "category": "adventure",
+                    "activity_type": "zipline",
                     "description": "Ziplining in Chiang Mai.",
                     "relevance_reason": "Matches adventure interests.",
                     "source_indices": [1],
@@ -313,6 +317,7 @@ async def test_combines_recommendations_from_multiple_interests(monkeypatch):
                 {
                     "name": name,
                     "category": category,
+                    "activity_type": "zipline" if category == "adventure" else "hiking",
                     "description": f"An attraction for {category} activities.",
                     "relevance_reason": f"Matches {category} interests.",
                     "source_indices": [source_index],

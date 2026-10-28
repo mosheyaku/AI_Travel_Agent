@@ -66,6 +66,7 @@ def validate_trip_plan(
                 )
 
             activity.name = original["name"]
+            activity.activity_type = original["activity_type"]
             activity.location_status = original.get(
                 "location_status",
                 LocationStatus.UNVERIFIED,
@@ -226,10 +227,18 @@ Requirements:
 - Use only attractions from the provided list.
 - Do not invent new attractions.
 - Preserve attraction names exactly as provided.
+- Preserve the activity_type of each attraction exactly as provided.
+- Do not invent or modify activity_type values.
 - Do not repeat the same attraction on multiple days.
 - Prioritize attractions that match the user's interests.
-- Include a variety of activities across the requested interests.
-- Avoid selecting multiple attractions that offer essentially the same experience.
+- Maximize the variety of experiences across the entire trip.
+- Prefer distinct activity types rather than different providers offering the same activity.
+- For example, do not select two similar zipline experiences when one zipline
+  experience could be combined with rafting, hiking, or a waterfall visit.
+- Two attractions in the same broad category are acceptable when they offer
+  meaningfully different experiences.
+- Do not add repetitive activities merely to fill the requested daily pace.
+- Prefer fewer meaningful activities over a larger number of repetitive ones.
 - Do not schedule multiple elephant sanctuary visits unless explicitly requested.
 - Do not schedule two full-day or long guided tours on the same day.
 - Prefer 1-2 substantial activities per day for a relaxed pace.
@@ -261,6 +270,7 @@ JSON structure:
       "activities": [
         {{
           "name": "Attraction name",
+          "activity_type": "zipline",
           "description": "Short activity description",
           "source_indices": [1]
         }}
@@ -317,8 +327,9 @@ JSON structure:
             "\n\nThe previous itinerary had planning problems:\n"
             + "\n".join(issues)
             + "\nGenerate a corrected itinerary."
-            + "\nRearrange attractions across days or change their order "
-            + "to reduce driving while respecting geographic constraints."
+            + "\nFix the reported problems by changing the selected attractions, "
+            + "their grouping, or their order as needed."
+            + "\nDo not introduce repetitive experiences just to fill a day."
             + "\nUse only the provided attractions and preserve their "
             + "source indices."
             + "\nReturn the complete corrected JSON itinerary."
