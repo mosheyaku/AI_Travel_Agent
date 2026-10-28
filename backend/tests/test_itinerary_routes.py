@@ -58,6 +58,7 @@ async def test_calculates_total_driving_route(monkeypatch):
     assert len(calls) == 2
     assert result.days[0].driving_distance_km == 25.0
     assert result.days[0].driving_duration_minutes == 40
+    assert result.days[0].driving_status == "verified"
 
 
 @pytest.mark.anyio
@@ -101,6 +102,7 @@ async def test_does_not_calculate_unverified_route(monkeypatch):
 
     assert result.days[0].driving_distance_km is None
     assert result.days[0].driving_duration_minutes is None
+    assert result.days[0].driving_status == "unknown"
 
 
 @pytest.mark.anyio
@@ -150,3 +152,28 @@ def test_ignores_missing_driving_data():
     issues = itinerary_routes.find_driving_issues(trip)
 
     assert issues == []
+
+
+@pytest.mark.anyio
+async def test_marks_excessive_driving(monkeypatch):
+    async def fake_get_driving_route(*coordinates):
+        return DrivingRoute(
+            distance_km=100,
+            duration_minutes=120,
+        )
+
+    monkeypatch.setattr(
+        itinerary_routes,
+        "get_driving_route",
+        fake_get_driving_route,
+    )
+
+    trip = make_trip([
+        make_activity("A", 18.7, 98.9),
+        make_activity("B", 18.8, 98.9),
+    ])
+
+    result = await itinerary_routes.add_driving_routes(trip)
+
+    assert result.days[0].driving_status == "exceeds_limit"
+    assert result.days[0].driving_duration_minutes == 120

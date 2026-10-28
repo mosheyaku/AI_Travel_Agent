@@ -77,6 +77,9 @@ class ItineraryDay(BaseModel):
     max_distance_km: float | None = None
     driving_distance_km: float | None = None
     driving_duration_minutes: int | None = None
+    driving_status: Literal[
+        "verified", "exceeds_limit", "unknown"
+    ] = "unknown"
     
 
 class TravelItinerary(BaseModel):
