@@ -14,8 +14,14 @@ from app.itinerary_distances import (
 from app.llm import generate_text
 from app.location_validation import LocationStatus
 from app.schemas import TravelItinerary, TravelPreferences
-from app.itinerary_routes import MAX_DAILY_DRIVING_MINUTES
-from app.itinerary_routes import add_driving_routes, find_driving_issues, add_total_driving_routes, find_total_driving_issues
+from app.itinerary_routes import (
+    MAX_DAILY_DRIVING_MINUTES,
+    MAX_TOTAL_DAILY_DRIVING_MINUTES,
+    add_driving_routes,
+    find_driving_issues,
+    add_total_driving_routes,
+    find_total_driving_issues,
+)
 import httpx
 
 from app.geocoding import search_locations
@@ -222,6 +228,19 @@ def total_trip_driving_minutes(trip: TravelItinerary) -> float:
         if day.activities
     )
 
+def total_driving_excess_minutes(
+    trip: TravelItinerary,
+    max_minutes: int = MAX_TOTAL_DAILY_DRIVING_MINUTES,
+) -> float:
+    """Calculate total driving minutes exceeding the daily target."""
+    return sum(
+        max(0, day.total_driving_duration_minutes - max_minutes)
+        if day.total_driving_duration_minutes is not None
+        else float("inf")
+        for day in trip.days
+        if day.activities
+    )
+
 
 def reset_route_data(trip: TravelItinerary) -> None:
     """Discard route values after changing the itinerary."""
@@ -253,7 +272,6 @@ async def repair_trip_plan(
 
     best: TravelItinerary | None = None
     best_score: tuple[int, int] | None = None
-
     checked = 0
     max_candidates = 80
 
@@ -500,9 +518,16 @@ JSON structure:
                     # Long driving times are quality issues, not validation errors.
                     if (
                         fallback_trip is None
-                        or total_trip_driving_minutes(trip)
-                        < total_trip_driving_minutes(fallback_trip)
+                        or (
+                            total_driving_excess_minutes(trip),
+                            total_trip_driving_minutes(trip),
+                        )
+                        < (
+                            total_driving_excess_minutes(fallback_trip),
+                            total_trip_driving_minutes(fallback_trip),
+                        )
                     ):
+                    
                         fallback_trip = trip
 
                     issues = driving_issues

@@ -853,3 +853,96 @@ async def test_adds_total_driving_after_valid_trip(monkeypatch):
     assert trip.days[0].total_driving_distance_km == 50.0
     assert trip.days[0].total_driving_duration_minutes == 80
     assert trip.days[0].driving_duration_minutes is None
+
+
+@pytest.mark.anyio
+async def test_prefers_trip_with_less_daily_driving_excess(monkeypatch):
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=2,
+        interests=["nature"],
+    )
+
+    recommendations = [
+        verified_attraction("Attraction A", 1),
+        verified_attraction("Attraction B", 2),
+    ]
+
+    plans = [
+        [["Attraction A"], ["Attraction B"]],
+        [["Attraction B"], ["Attraction A"]],
+    ]
+
+    generated = 0
+
+    async def fake_generate_text(prompt):
+        nonlocal generated
+
+        plan = plans[generated]
+        generated += 1
+
+        return json.dumps({
+            "destination": "Chiang Mai, Thailand",
+            "days": [
+                {
+                    "day": index,
+                    "activities": [
+                        {
+                            "name": name,
+                            "activity_type": "other",
+                            "description": "Test attraction.",
+                            "source_indices": [
+                                1 if name == "Attraction A" else 2
+                            ],
+                        }
+                        for name in names
+                    ],
+                }
+                for index, names in enumerate(plan, start=1)
+            ],
+        })
+
+    async def fake_find_trip_origin(destination):
+        return (18.7883, 98.9853)
+
+    async def fake_add_total_driving_routes(
+        trip,
+        origin_latitude,
+        origin_longitude,
+    ):
+        if trip.days[0].activities[0].name == "Attraction A":
+            durations = [240, 100]
+        else:
+            durations = [190, 170]
+
+        for day, duration in zip(trip.days, durations):
+            day.total_driving_duration_minutes = duration
+
+        return trip
+
+    monkeypatch.setattr(
+        trip_generator,
+        "generate_text",
+        fake_generate_text,
+    )
+    monkeypatch.setattr(
+        trip_generator,
+        "find_trip_origin",
+        fake_find_trip_origin,
+    )
+    monkeypatch.setattr(
+        trip_generator,
+        "add_total_driving_routes",
+        fake_add_total_driving_routes,
+    )
+
+    trip = await trip_generator.generate_trip_plan(
+        preferences,
+        recommendations,
+    )
+
+    assert generated == 2
+    assert trip.days[0].activities[0].name == "Attraction B"
+    assert trip.days[0].total_driving_duration_minutes == 190
+    assert trip.days[1].total_driving_duration_minutes == 170
+    
