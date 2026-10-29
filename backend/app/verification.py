@@ -53,6 +53,8 @@ Requirements:
         async with semaphore:
             identification_text = await generate_text(identification_prompt)
 
+            stage = "source identification"
+
             try:
                 identification = json.loads(identification_text)
                 identified_indices = identification["source_indices"]
@@ -117,6 +119,7 @@ Requirements:
 - Return valid JSON only.
 """
 
+                stage = "fact verification"
                 verification_text = await generate_text(verification_prompt)
                 response = json.loads(verification_text)
 
@@ -140,7 +143,8 @@ Requirements:
 
             except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
                 raise ValueError(
-                    "The model returned invalid verification results."
+                    f"Verification failed for '{recommendation.name}' "
+                    f"during {stage}: {type(exc).__name__}: {exc}"
                 ) from exc
 
     results = await asyncio.gather(

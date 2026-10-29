@@ -87,7 +87,29 @@ def find_driving_issues(
 
     return issues
 
+MAX_TOTAL_DAILY_DRIVING_MINUTES = 180
 
+
+def find_total_driving_issues(
+    trip: TravelItinerary,
+    max_minutes: int = MAX_TOTAL_DAILY_DRIVING_MINUTES,
+) -> list[str]:
+    """Find days with excessive round-trip driving time."""
+    issues = []
+
+    for day in trip.days:
+        duration = day.total_driving_duration_minutes
+
+        if duration is not None and duration > max_minutes:
+            issues.append(
+                f"Day {day.day}: total round-trip driving "
+                f"takes {duration} minutes, exceeding "
+                f"the {max_minutes}-minute planning limit."
+            )
+
+    return issues
+
+    
 async def add_total_driving_routes(
     trip: TravelItinerary,
     origin_latitude: float,
