@@ -28,6 +28,8 @@ import type {
   TripSource,
 } from "../types/trip";
 
+import TripMap from "./TripMap";
+
 interface ItineraryViewProps {
   data: GenerateTripResponse;
 }
@@ -290,6 +292,8 @@ export default function ItineraryView({
           </Paper>
         ))}
       </Stack>
+
+      <TripMap trip={trip} />
 
       {sources.length > 0 && (
         <Accordion

@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   Alert,
@@ -70,12 +70,38 @@ const theme = createTheme({
   },
 });
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof TypeError) {
+    return "Unable to connect to the server. Please try again.";
+  }
+
+  if (error instanceof Error) {
+    if (error.message.includes("502")) {
+      return "We couldn't generate a verified itinerary for this destination. Try another destination or different interests.";
+    }
+
+    return error.message;
+  }
+
+  return "Something went wrong. Please try again.";
+}
+
 export default function App() {
   const [tripData, setTripData] =
     useState<GenerateTripResponse | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const resultRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (tripData || error) {
+      resultRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }
+  }, [tripData, error]);
 
   const handleGenerateTrip = async (
     preferences: TravelPreferences
@@ -88,11 +114,7 @@ export default function App() {
       const result = await generateTrip(preferences);
       setTripData(result);
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "An unexpected error occurred."
-      );
+      setError(getErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -106,9 +128,10 @@ export default function App() {
         sx={{
           minHeight: "100vh",
           bgcolor: "background.default",
+          display: "flex",
+          flexDirection: "column",
         }}
       >
-        {/* Header */}
         <Box
           component="header"
           sx={{
@@ -121,10 +144,7 @@ export default function App() {
             <Stack
               direction="row"
               spacing={1.5}
-              sx={{
-                alignItems: "center",
-                py: 2,
-              }}
+              sx={{ alignItems: "center", py: 2 }}
             >
               <Box
                 sx={{
@@ -164,10 +184,10 @@ export default function App() {
           </Container>
         </Box>
 
-        {/* Main content */}
         <Box
           component="main"
           sx={{
+            flex: 1,
             py: { xs: 4, md: 7 },
             background:
               "radial-gradient(ellipse at 50% 0%, #E4F2EC 0%, #F6F8F6 55%)",
@@ -184,10 +204,7 @@ export default function App() {
               }}
             >
               <AutoAwesome
-                sx={{
-                  fontSize: 17,
-                  color: "primary.main",
-                }}
+                sx={{ fontSize: 17, color: "primary.main" }}
               />
 
               <Typography
@@ -207,58 +224,50 @@ export default function App() {
               loading={loading}
             />
 
-            {loading && (
-              <Box
-                sx={{
-                  textAlign: "center",
-                  mt: 5,
-                  py: 3,
-                }}
-              >
-                <CircularProgress size={36} />
-
-                <Typography
+            <Box ref={resultRef} sx={{ scrollMarginTop: 24 }}>
+              {loading && (
+                <Stack
+                  spacing={2}
                   sx={{
-                    mt: 2,
-                    fontWeight: 600,
+                    alignItems: "center",
+                    textAlign: "center",
+                    mt: 5,
+                    py: 4,
                   }}
                 >
-                  Creating your personalized itinerary...
-                </Typography>
+                  <CircularProgress size={40} />
 
-                <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  sx={{ mt: 1 }}
+                  <Typography sx={{ fontWeight: 700 }}>
+                    Creating your personalized itinerary...
+                  </Typography>
+
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                  >
+                    Searching for attractions and planning your route.
+                    This may take a little while.
+                  </Typography>
+                </Stack>
+              )}
+
+              {error && (
+                <Alert
+                  severity="error"
+                  sx={{ mt: 3, borderRadius: 2 }}
                 >
-                  Finding experiences that match your interests.
-                </Typography>
-              </Box>
-            )}
+                  {error}
+                </Alert>
+              )}
 
-            {error && (
-              <Alert
-                severity="error"
-                sx={{
-                  mt: 3,
-                  borderRadius: 2,
-                }}
-              >
-                {error}
-              </Alert>
-            )}
-
-            {tripData && <ItineraryView data={tripData} />}
+              {tripData && <ItineraryView data={tripData} />}
+            </Box>
           </Container>
         </Box>
 
-        {/* Footer */}
         <Box
           component="footer"
-          sx={{
-            bgcolor: "background.paper",
-            mt: "auto",
-          }}
+          sx={{ bgcolor: "background.paper" }}
         >
           <Divider />
 
