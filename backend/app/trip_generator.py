@@ -14,7 +14,7 @@ from app.itinerary_distances import (
 from app.llm import generate_text
 from app.location_validation import LocationStatus
 from app.schemas import TravelItinerary, TravelPreferences
-from app.itinerary_routes import add_driving_routes, find_driving_issues, add_total_driving_routes
+from app.itinerary_routes import add_driving_routes, find_driving_issues, add_total_driving_routes, find_total_driving_issues
 import httpx
 
 from app.geocoding import search_locations
@@ -153,6 +153,45 @@ def find_activity_load_issues(trip: TravelItinerary) -> list[str]:
 
     return issues
 
+RESTRICTED_REPEATED_ACTIVITY_TYPES = {
+    "elephant_sanctuary",
+    "zipline",
+    "rafting",
+    "cooking_class",
+    "water_park",
+}
+
+
+def find_repetitive_experience_issues(
+    trip: TravelItinerary,
+) -> list[str]:
+    """Find repeated experiences that add little variety to a trip."""
+    issues = []
+    seen_types = {}
+
+    for day in trip.days:
+        for activity in day.activities:
+            activity_type = activity.activity_type
+
+            if activity_type not in RESTRICTED_REPEATED_ACTIVITY_TYPES:
+                continue
+
+            if activity_type in seen_types:
+                previous_day, previous_name = seen_types[activity_type]
+
+                issues.append(
+                    f"Day {day.day}: {activity.name} repeats the "
+                    f"{activity_type} experience already scheduled "
+                    f"on Day {previous_day} ({previous_name})."
+                )
+            else:
+                seen_types[activity_type] = (
+                    day.day,
+                    activity.name,
+                )
+
+    return issues
+
 
 async def find_trip_origin(
     destination: str,
@@ -170,6 +209,17 @@ async def find_trip_origin(
         return None
 
     return location.latitude, location.longitude
+
+
+def total_trip_driving_minutes(trip: TravelItinerary) -> float:
+    """Calculate total driving time, penalizing unknown durations."""
+    return sum(
+        day.total_driving_duration_minutes
+        if day.total_driving_duration_minutes is not None
+        else float("inf")
+        for day in trip.days
+        if day.activities
+    )
 
 
 async def generate_trip_plan(
@@ -280,7 +330,8 @@ JSON structure:
 }}
 """
 
-    
+    fallback_trip = None
+
     for attempt in range(MAX_GENERATION_ATTEMPTS):
         response_text = await generate_text(prompt)
 
@@ -297,27 +348,45 @@ JSON structure:
 
         geographic_issues = find_geographic_issues(trip)
         activity_issues = find_activity_load_issues(trip)
+        repetition_issues = find_repetitive_experience_issues(trip)
 
-        # Avoid unnecessary API calls when geographic validation fails.
-        if geographic_issues or activity_issues:
-            issues = geographic_issues + activity_issues
-        else:
+        issues = geographic_issues + activity_issues + repetition_issues
+
+        if not issues:
             trip = await add_driving_routes(trip)
             issues = find_driving_issues(trip)
 
         if not issues:
             origin = await find_trip_origin(preferences.destination)
-            
+
             if origin is not None:
                 trip = await add_total_driving_routes(
                     trip,
                     origin_latitude=origin[0],
                     origin_longitude=origin[1],
                 )
-            
-            return trip
+
+                driving_issues = find_total_driving_issues(trip)
+
+                if driving_issues:
+                    # Long driving times are quality issues, not validation errors.
+                    if (
+                        fallback_trip is None
+                        or total_trip_driving_minutes(trip)
+                        < total_trip_driving_minutes(fallback_trip)
+                    ):
+                        fallback_trip = trip
+
+                    issues = driving_issues
+                else:
+                    return trip
+            else:
+                return trip
 
         if attempt == MAX_GENERATION_ATTEMPTS - 1:
+            if fallback_trip is not None:
+                return fallback_trip
+
             raise ValueError(
                 "The trip plan failed route validation: "
                 + "; ".join(issues)
