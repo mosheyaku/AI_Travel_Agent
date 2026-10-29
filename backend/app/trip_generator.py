@@ -14,6 +14,7 @@ from app.itinerary_distances import (
 from app.llm import generate_text
 from app.location_validation import LocationStatus
 from app.schemas import TravelItinerary, TravelPreferences
+from app.itinerary_routes import MAX_DAILY_DRIVING_MINUTES
 from app.itinerary_routes import add_driving_routes, find_driving_issues, add_total_driving_routes, find_total_driving_issues
 import httpx
 
@@ -222,6 +223,133 @@ def total_trip_driving_minutes(trip: TravelItinerary) -> float:
     )
 
 
+def reset_route_data(trip: TravelItinerary) -> None:
+    """Discard route values after changing the itinerary."""
+    for day in trip.days:
+        day.max_distance_km = calculate_day_max_distance(day)
+        day.driving_distance_km = None
+        day.driving_duration_minutes = None
+        day.driving_status = "unknown"
+        day.total_driving_distance_km = None
+        day.total_driving_duration_minutes = None
+
+
+def find_planning_issues(trip: TravelItinerary) -> list[str]:
+    """Find itinerary issues that do not require route API calls."""
+    return (
+        find_geographic_issues(trip)
+        + find_activity_load_issues(trip)
+        + find_repetitive_experience_issues(trip)
+    )
+
+
+async def repair_trip_plan(
+    trip: TravelItinerary,
+    preferences: TravelPreferences,
+    recommendations: list[dict],
+) -> TravelItinerary | None:
+    """Repair an invalid itinerary using limited activity edits."""
+    original_count = sum(len(day.activities) for day in trip.days)
+
+    best: TravelItinerary | None = None
+    best_score: tuple[int, int] | None = None
+
+    checked = 0
+    max_candidates = 80
+
+    for source_index, source_day in enumerate(trip.days):
+        for activity_index in range(len(source_day.activities)):
+            destinations = [
+                source_index,
+                *(
+                    index
+                    for index in range(len(trip.days))
+                    if index != source_index
+                ),
+                None,
+            ]
+
+            for destination_index in destinations:
+                if destination_index == source_index:
+                    positions = range(len(source_day.activities))
+                elif destination_index is None:
+                    positions = (0,)
+                else:
+                    positions = range(
+                        len(trip.days[destination_index].activities) + 1
+                    )
+
+                for position in positions:
+                    if (
+                        destination_index == source_index
+                        and position == activity_index
+                    ):
+                        continue
+
+                    if checked >= max_candidates:
+                        return best
+
+                    checked += 1
+
+                    candidate = trip.model_copy(deep=True)
+
+                    activity = candidate.days[
+                        source_index
+                    ].activities.pop(activity_index)
+
+                    if destination_index is not None:
+                        candidate.days[
+                            destination_index
+                        ].activities.insert(position, activity)
+
+                    reset_route_data(candidate)
+
+                    if find_planning_issues(candidate):
+                        continue
+
+                    validate_trip_plan(
+                        candidate,
+                        preferences,
+                        recommendations,
+                    )
+
+                    await add_driving_routes(candidate)
+
+                    if find_driving_issues(candidate):
+                        continue
+
+                    if any(
+                        len(day.activities) > 1
+                        and day.driving_status != "verified"
+                        for day in candidate.days
+                    ):
+                        continue
+
+                    count = sum(
+                        len(day.activities)
+                        for day in candidate.days
+                    )
+
+                    minutes = sum(
+                        day.driving_duration_minutes or 0
+                        for day in candidate.days
+                    )
+
+                    score = (
+                        original_count - count,
+                        minutes,
+                    )
+
+                    if best_score is None or score < best_score:
+                        best = candidate
+                        best_score = score
+
+                        if score == (0, 0):
+                            return best
+
+    return best
+
+
 async def generate_trip_plan(
     preferences: TravelPreferences,
     recommendations: list[dict],
@@ -386,6 +514,23 @@ JSON structure:
         if attempt == MAX_GENERATION_ATTEMPTS - 1:
             if fallback_trip is not None:
                 return fallback_trip
+
+            repaired = await repair_trip_plan(
+                trip,
+                preferences,
+                recommendations,
+            )
+            
+            if repaired is not None:
+                origin = await find_trip_origin(preferences.destination)
+                
+                if origin is not None:
+                    repaired = await add_total_driving_routes(
+                        repaired,
+                        origin_latitude=origin[0],
+                        origin_longitude=origin[1],
+                    )
+                return repaired
 
             raise ValueError(
                 "The trip plan failed route validation: "

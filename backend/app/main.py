@@ -4,7 +4,7 @@ from app.config import settings
 from app.search import search_attractions
 from app.recommendations import recommend_attractions
 from app.schemas import TravelPreferences
-from app.trip_planning import build_attraction_queries
+from app.trip_planning import build_attraction_queries, get_attraction_search_limit
 from app.trip_generator import generate_trip_plan
 
 app = FastAPI(
@@ -56,7 +56,8 @@ async def trip_attractions(
     queries = build_attraction_queries(preferences)
 
     try:
-        return await recommend_attractions(queries,destination=preferences.destination,)
+        return await recommend_attractions(queries,destination=preferences.destination,
+        max_attractions=get_attraction_search_limit(preferences),)
     except ValueError as exc:
         print(f"Trip attractions error: {exc!r}", flush=True)
         
@@ -78,6 +79,7 @@ async def generate_trip(
         attraction_data = await recommend_attractions(
             queries,
             destination=preferences.destination,
+            max_attractions=get_attraction_search_limit(preferences),
         )
 
         trip_plan = await generate_trip_plan(

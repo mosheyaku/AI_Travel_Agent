@@ -1,5 +1,6 @@
 import asyncio
 import json
+
 from pydantic import ValidationError
 
 from app.llm import generate_text
@@ -10,9 +11,23 @@ from app.verification import verify_recommendations
 from app.attraction_locations import validate_attraction_locations
 
 
-async def recommend_attractions(query: str | list[str], destination: str | None = None,) -> dict:
+async def recommend_attractions(
+    query: str | list[str],
+    destination: str | None = None,
+    max_attractions: int = 15,
+) -> dict:
     """Find and validate attraction recommendations for each search query."""
     queries = [query] if isinstance(query, str) else query
+
+    if not queries:
+        raise ValueError("At least one search query is required.")
+
+    if max_attractions < 1:
+        raise ValueError("max_attractions must be positive.")
+
+    per_query_limit = (
+        max_attractions + len(queries) - 1
+    ) // len(queries)
 
     search_responses = await asyncio.gather(
         *[
@@ -86,7 +101,7 @@ Return a JSON object with this exact structure:
 
 Requirements:
 - Answer in English.
-- Return up to 5 distinct attraction recommendations.
+- Return up to {per_query_limit} distinct attraction recommendations.
 - Do not invent attractions.
 - Each recommendation must represent one specific, identifiable attraction,
   location, trail, park, or activity provider mentioned in the sources.
@@ -135,10 +150,11 @@ Requirements:
         for attempt in range(2):
             response_text = await generate_text(prompt)
 
-            print(f"LLM response for '{search_query}', attempt {attempt + 1}: "
-            f"{response_text!r}",
-            flush=True,
-)
+            print(
+                f"LLM response for '{search_query}', attempt {attempt + 1}: "
+                f"{response_text!r}",
+                flush=True,
+            )
 
             try:
                 response_data = json.loads(response_text)
@@ -151,7 +167,9 @@ Requirements:
 
                 for item in raw_recommendations:
                     try:
-                        recommendation = AttractionRecommendation.model_validate(item)
+                        recommendation = AttractionRecommendation.model_validate(
+                            item
+                        )
                     except ValidationError:
                         continue
 
@@ -168,7 +186,7 @@ Requirements:
 
                     valid_recommendations.append(recommendation)
 
-                    if len(valid_recommendations) == 5:
+                    if len(valid_recommendations) == per_query_limit:
                         break
 
                 if valid_recommendations:
@@ -181,9 +199,17 @@ Requirements:
 
                 raise ValueError("No valid recommendations were returned.")
 
-            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
-                print(f"Recommendation failed for '{search_query}', "
-                f"attempt {attempt + 1}: {exc!r}",flush=True,)
+            except (
+                json.JSONDecodeError,
+                KeyError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                print(
+                    f"Recommendation failed for '{search_query}', "
+                    f"attempt {attempt + 1}: {exc!r}",
+                    flush=True,
+                )
 
                 prompt += f"""
 
@@ -195,29 +221,56 @@ Available source indices: {sorted(valid_indices)}
 Return valid JSON using only these source indices.
 """
 
-    print(f"Total valid recommendations: {len(recommendations)}",flush=True,)
-
     if sources and not recommendations:
-        raise ValueError("The model returned no valid recommendations after retry.")
-    
-    print(f"Total valid recommendations: {len(recommendations)}", flush=True)
+        raise ValueError(
+            "The model returned no valid recommendations after retry."
+        )
+
+    print(
+        f"Total valid recommendations: {len(recommendations)}",
+        flush=True,
+    )
 
     recommendations = deduplicate_attractions(recommendations)
+
+    print(
+        f"After deduplication: {len(recommendations)}",
+        flush=True,
+    )
+
     recommendations = await verify_recommendations(
-    recommendations,
-    sources,
-    destination,
+        recommendations,
+        sources,
+        destination,
+    )
+
+    print(
+        f"After source verification: {len(recommendations)}",
+        flush=True,
     )
 
     if destination:
-        recommendations = await validate_attraction_locations(recommendations,destination,)
-    
+        recommendations = await validate_attraction_locations(
+            recommendations,
+            destination,
+        )
+
+        print(
+            "After location validation:",
+            len(recommendations),
+            "verified:",
+            sum(
+                recommendation.location_status == "verified"
+                for recommendation in recommendations
+            ),
+            flush=True,
+        )
+
     parsed = AttractionRecommendations(
-        recommendations=recommendations[:15]
+        recommendations=recommendations[:max_attractions]
     )
 
     print("Recommendations schema validation passed", flush=True)
-
 
     return {
         "query": query,
