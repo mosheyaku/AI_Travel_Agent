@@ -128,9 +128,18 @@ def find_geographic_issues(
 
 
 
-def find_activity_load_issues(trip: TravelItinerary) -> list[str]:
-    """Find days with incompatible or uncertain activity durations."""
+def find_activity_load_issues(
+    trip: TravelItinerary,
+    pace: str = "balanced",
+) -> list[str]:
+    """Find days with incompatible durations or excessive activity counts."""
     issues = []
+
+    max_activities = {
+        "relaxed": 2,
+        "balanced": 3,
+        "active": 4,
+    }[pace]
 
     for day in trip.days:
         full_day_activities = [
@@ -159,7 +168,14 @@ def find_activity_load_issues(trip: TravelItinerary) -> list[str]:
                 f"activities ({', '.join(substantial_activities)})."
             )
 
+        if len(day.activities) > max_activities:
+            issues.append(
+                f"Day {day.day}: {len(day.activities)} activities "
+                f"exceed the {pace} pace limit of {max_activities}."
+            )
+
     return issues
+
 
 RESTRICTED_REPEATED_ACTIVITY_TYPES = {
     "elephant_sanctuary",
@@ -254,14 +270,16 @@ def reset_route_data(trip: TravelItinerary) -> None:
         day.total_driving_duration_minutes = None
 
 
-def find_planning_issues(trip: TravelItinerary) -> list[str]:
+def find_planning_issues(
+    trip: TravelItinerary,
+    pace: str = "balanced",
+) -> list[str]:
     """Find itinerary issues that do not require route API calls."""
     return (
         find_geographic_issues(trip)
-        + find_activity_load_issues(trip)
+        + find_activity_load_issues(trip, pace)
         + find_repetitive_experience_issues(trip)
     )
-
 
 async def repair_trip_plan(
     trip: TravelItinerary,
@@ -323,7 +341,7 @@ async def repair_trip_plan(
 
                     reset_route_data(candidate)
 
-                    if find_planning_issues(candidate):
+                    if find_planning_issues(candidate, preferences.pace):
                         continue
 
                     validate_trip_plan(
@@ -494,7 +512,7 @@ JSON structure:
         validate_trip_plan(trip, preferences, recommendations)
 
         geographic_issues = find_geographic_issues(trip)
-        activity_issues = find_activity_load_issues(trip)
+        activity_issues = find_activity_load_issues(trip, preferences.pace)
         repetition_issues = find_repetitive_experience_issues(trip)
 
         issues = geographic_issues + activity_issues + repetition_issues

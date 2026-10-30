@@ -983,3 +983,110 @@ def test_activity_load_with_unknown_durations(
     issues = find_activity_load_issues(trip)
 
     assert bool(issues) == should_reject
+
+
+@pytest.mark.parametrize(
+    ("pace", "activity_count", "should_reject"),
+    [
+        ("relaxed", 2, False),
+        ("relaxed", 3, True),
+        ("balanced", 3, False),
+        ("balanced", 4, True),
+        ("active", 4, False),
+        ("active", 5, True),
+    ],
+)
+def test_activity_count_respects_travel_pace(
+    pace,
+    activity_count,
+    should_reject,
+):
+    trip = TravelItinerary.model_validate({
+        "destination": "Chiang Mai",
+        "days": [{
+            "day": 1,
+            "activities": [
+                {
+                    "name": f"Attraction {index}",
+                    "activity_type": "other",
+                    "description": "A short activity.",
+                    "source_indices": [index],
+                    "duration_type": "short",
+                }
+                for index in range(1, activity_count + 1)
+            ],
+        }],
+    })
+
+    issues = find_activity_load_issues(trip, pace)
+
+    assert bool(issues) == should_reject
+
+
+@pytest.mark.anyio
+async def test_retries_when_trip_exceeds_requested_pace(
+    monkeypatch,
+    mock_driving_routes,
+):
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=2,
+        interests=["nature"],
+        pace="relaxed",
+    )
+
+    recommendations = [
+        verified_attraction(
+            f"Attraction {index}",
+            index,
+            duration_type="short",
+        )
+        for index in range(1, 4)
+    ]
+
+    generated_plans = [
+        [["Attraction 1", "Attraction 2", "Attraction 3"], []],
+        [["Attraction 1", "Attraction 2"], ["Attraction 3"]],
+    ]
+
+    prompts = []
+
+    async def fake_generate_text(prompt: str) -> str:
+        prompts.append(prompt)
+        plan = generated_plans[len(prompts) - 1]
+
+        return json.dumps({
+            "destination": "Chiang Mai, Thailand",
+            "days": [
+                {
+                    "day": day_number,
+                    "activities": [
+                        {
+                            "name": name,
+                            "activity_type": "other",
+                            "description": "Test activity.",
+                            "source_indices": [
+                                int(name.split()[-1])
+                            ],
+                        }
+                        for name in names
+                    ],
+                }
+                for day_number, names in enumerate(plan, start=1)
+            ],
+        })
+
+    monkeypatch.setattr(
+        trip_generator,
+        "generate_text",
+        fake_generate_text,
+    )
+
+    trip = await trip_generator.generate_trip_plan(
+        preferences,
+        recommendations,
+    )
+
+    assert len(prompts) == 2
+    assert "exceed the relaxed pace limit" in prompts[1]
+    assert [len(day.activities) for day in trip.days] == [2, 1]
