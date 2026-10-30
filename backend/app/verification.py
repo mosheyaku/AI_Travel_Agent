@@ -97,7 +97,9 @@ Verified identity sources:
 Return JSON:
 {{
   "verified": true,
-  "description": "Short, factual description"
+  "description": "Short, factual description",
+  "activity_type": "hiking",
+  "duration_type": "unknown"
 }}
 
 Requirements:
@@ -117,6 +119,20 @@ Requirements:
   umbrella names that represent multiple different places.
 - A source page title is not sufficient proof that an attraction exists.
 - Return valid JSON only.
+- Verify the attraction's activity_type against the identified sources.
+- activity_type must describe an actual visitor experience supported
+  by the sources for this exact attraction.
+- Do not retain the original activity_type if it is unsupported.
+- If the original activity_type is unsupported but another specific
+  visitor activity is explicitly supported, use that activity instead.
+- If no specific visitor activity can be verified, return verified=false.
+- Use lowercase snake_case for activity_type.
+- Use the same activity_type for essentially identical experiences.
+- Verify duration_type using only explicit source evidence.
+- Allowed duration_type values: short, half_day, full_day, unknown.
+- Use unknown when the duration is not established by the sources.
+- Do not infer a full-day duration merely because the attraction
+  is a national park or a large geographic area.
 """
 
                 stage = "fact verification"
@@ -130,13 +146,30 @@ Requirements:
                     return None
 
                 description = response["description"]
-
+                activity_type = response["activity_type"]
+                duration_type = response["duration_type"]
+                
                 if not isinstance(description, str) or not description.strip():
                     raise ValueError("Invalid verified description.")
 
+                if (not isinstance(activity_type, str) or not activity_type.strip()
+                or not activity_type.isascii() or not all(
+                    character.islower() or character.isdigit() or character == "_"
+                    for character in activity_type
+                    )
+                
+                ):
+                
+                    raise ValueError("Invalid verified activity type.")
+                    
+                if duration_type not in {"short", "half_day", "full_day", "unknown",}:
+                    raise ValueError("Invalid verified duration type.")
+                    
                 return recommendation.model_copy(
                     update={
                         "description": description.strip(),
+                        "activity_type": activity_type,
+                        "duration_type": duration_type,
                         "source_indices": identified_indices,
                     }
                 )

@@ -51,7 +51,7 @@ def test_rejects_duplicate_names():
         AttractionRecommendations.model_validate(data)
 
 
-def test_rejects_more_than_fifteen_recommendations():
+def test_accepts_more_than_fifteen_recommendations():
     data = {
         "recommendations": [
             make_recommendation(f"Attraction {index}")
@@ -59,8 +59,9 @@ def test_rejects_more_than_fifteen_recommendations():
         ]
     }
 
-    with pytest.raises(ValidationError):
-        AttractionRecommendations.model_validate(data)
+    result = AttractionRecommendations.model_validate(data)
+
+    assert len(result.recommendations) == 16
 
 
 def test_accepts_valid_travel_preferences():

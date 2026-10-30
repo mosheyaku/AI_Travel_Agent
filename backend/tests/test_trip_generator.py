@@ -368,6 +368,7 @@ async def test_preserves_verified_attraction_location(monkeypatch):
     assert activity.latitude == 19.2171729
     assert activity.longitude == 98.860038
     assert activity.location_status == LocationStatus.VERIFIED
+    assert activity.description == "Visit an elephant sanctuary in Chiang Mai."
 
 
 @pytest.mark.anyio
@@ -681,7 +682,7 @@ def test_rejects_three_half_day_activities():
     issues = find_activity_load_issues(trip)
 
     assert len(issues) == 1
-    assert "too many half-day activities" in issues[0]
+    assert "too many half-day or unknown-duration activities" in issues[0]
 
 
 def test_allows_two_half_day_activities():
@@ -784,7 +785,7 @@ async def test_retries_when_day_has_too_many_half_day_activities(
     )
 
     assert len(prompts) == 2
-    assert "too many half-day activities" in prompts[1]
+    assert "too many half-day or unknown-duration activities" in prompts[1]
     assert [len(day.activities) for day in trip.days] == [2, 1]
 
 
@@ -853,3 +854,239 @@ async def test_adds_total_driving_after_valid_trip(monkeypatch):
     assert trip.days[0].total_driving_distance_km == 50.0
     assert trip.days[0].total_driving_duration_minutes == 80
     assert trip.days[0].driving_duration_minutes is None
+
+
+@pytest.mark.anyio
+async def test_prefers_trip_with_less_daily_driving_excess(monkeypatch):
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=2,
+        interests=["nature"],
+    )
+
+    recommendations = [
+        verified_attraction("Attraction A", 1),
+        verified_attraction("Attraction B", 2),
+    ]
+
+    plans = [
+        [["Attraction A"], ["Attraction B"]],
+        [["Attraction B"], ["Attraction A"]],
+    ]
+
+    generated = 0
+
+    async def fake_generate_text(prompt):
+        nonlocal generated
+
+        plan = plans[generated]
+        generated += 1
+
+        return json.dumps({
+            "destination": "Chiang Mai, Thailand",
+            "days": [
+                {
+                    "day": index,
+                    "activities": [
+                        {
+                            "name": name,
+                            "activity_type": "other",
+                            "description": "Test attraction.",
+                            "source_indices": [
+                                1 if name == "Attraction A" else 2
+                            ],
+                        }
+                        for name in names
+                    ],
+                }
+                for index, names in enumerate(plan, start=1)
+            ],
+        })
+
+    async def fake_find_trip_origin(destination):
+        return (18.7883, 98.9853)
+
+    async def fake_add_total_driving_routes(
+        trip,
+        origin_latitude,
+        origin_longitude,
+    ):
+        if trip.days[0].activities[0].name == "Attraction A":
+            durations = [240, 100]
+        else:
+            durations = [190, 170]
+
+        for day, duration in zip(trip.days, durations):
+            day.total_driving_duration_minutes = duration
+
+        return trip
+
+    monkeypatch.setattr(
+        trip_generator,
+        "generate_text",
+        fake_generate_text,
+    )
+    monkeypatch.setattr(
+        trip_generator,
+        "find_trip_origin",
+        fake_find_trip_origin,
+    )
+    monkeypatch.setattr(
+        trip_generator,
+        "add_total_driving_routes",
+        fake_add_total_driving_routes,
+    )
+
+    trip = await trip_generator.generate_trip_plan(
+        preferences,
+        recommendations,
+    )
+
+    assert generated == 2
+    assert trip.days[0].activities[0].name == "Attraction B"
+    assert trip.days[0].total_driving_duration_minutes == 190
+    assert trip.days[1].total_driving_duration_minutes == 170
+    
+
+@pytest.mark.parametrize(
+    ("durations", "should_reject"),
+    [
+        (["unknown", "unknown", "unknown"], True),
+        (["half_day", "unknown", "unknown"], True),
+        (["half_day", "half_day", "unknown"], True),
+        (["unknown", "unknown"], False),
+        (["half_day", "unknown"], False),
+        (["short", "short", "unknown"], False),
+    ],
+)
+def test_activity_load_with_unknown_durations(
+    durations,
+    should_reject,
+):
+    trip = TravelItinerary.model_validate({
+        "destination": "Chiang Mai",
+        "days": [{
+            "day": 1,
+            "activities": [
+                {
+                    "name": f"Attraction {index}",
+                    "activity_type": "other",
+                    "description": "Test attraction.",
+                    "source_indices": [index],
+                    "duration_type": duration,
+                }
+                for index, duration in enumerate(durations, start=1)
+            ],
+        }],
+    })
+
+    issues = find_activity_load_issues(trip)
+
+    assert bool(issues) == should_reject
+
+
+@pytest.mark.parametrize(
+    ("pace", "activity_count", "should_reject"),
+    [
+        ("relaxed", 2, False),
+        ("relaxed", 3, True),
+        ("balanced", 3, False),
+        ("balanced", 4, True),
+        ("active", 4, False),
+        ("active", 5, True),
+    ],
+)
+def test_activity_count_respects_travel_pace(
+    pace,
+    activity_count,
+    should_reject,
+):
+    trip = TravelItinerary.model_validate({
+        "destination": "Chiang Mai",
+        "days": [{
+            "day": 1,
+            "activities": [
+                {
+                    "name": f"Attraction {index}",
+                    "activity_type": "other",
+                    "description": "A short activity.",
+                    "source_indices": [index],
+                    "duration_type": "short",
+                }
+                for index in range(1, activity_count + 1)
+            ],
+        }],
+    })
+
+    issues = find_activity_load_issues(trip, pace)
+
+    assert bool(issues) == should_reject
+
+
+@pytest.mark.anyio
+async def test_retries_when_trip_exceeds_requested_pace(
+    monkeypatch,
+    mock_driving_routes,
+):
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=2,
+        interests=["nature"],
+        pace="relaxed",
+    )
+
+    recommendations = [
+        verified_attraction(
+            f"Attraction {index}",
+            index,
+            duration_type="short",
+        )
+        for index in range(1, 4)
+    ]
+
+    generated_plans = [
+        [["Attraction 1", "Attraction 2", "Attraction 3"], []],
+        [["Attraction 1", "Attraction 2"], ["Attraction 3"]],
+    ]
+
+    prompts = []
+
+    async def fake_generate_text(prompt: str) -> str:
+        prompts.append(prompt)
+        plan = generated_plans[len(prompts) - 1]
+
+        return json.dumps({
+            "destination": "Chiang Mai, Thailand",
+            "days": [
+                {
+                    "day": day_number,
+                    "activities": [
+                        {
+                            "name": name,
+                            "activity_type": "other",
+                            "description": "Test activity.",
+                            "source_indices": [
+                                int(name.split()[-1])
+                            ],
+                        }
+                        for name in names
+                    ],
+                }
+                for day_number, names in enumerate(plan, start=1)
+            ],
+        })
+
+    monkeypatch.setattr(
+        trip_generator,
+        "generate_text",
+        fake_generate_text,
+    )
+
+    trip = await trip_generator.generate_trip_plan(
+        preferences,
+        recommendations,
+    )
+
+    assert len(prompts) == 2
+    assert "exceed the relaxed pace limit" in prompts[1]
+    assert [len(day.activities) for day in trip.days] == [2, 1]

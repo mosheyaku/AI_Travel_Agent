@@ -14,7 +14,14 @@ from app.itinerary_distances import (
 from app.llm import generate_text
 from app.location_validation import LocationStatus
 from app.schemas import TravelItinerary, TravelPreferences
-from app.itinerary_routes import add_driving_routes, find_driving_issues, add_total_driving_routes, find_total_driving_issues
+from app.itinerary_routes import (
+    MAX_DAILY_DRIVING_MINUTES,
+    MAX_TOTAL_DAILY_DRIVING_MINUTES,
+    add_driving_routes,
+    find_driving_issues,
+    add_total_driving_routes,
+    find_total_driving_issues,
+)
 import httpx
 
 from app.geocoding import search_locations
@@ -66,6 +73,7 @@ def validate_trip_plan(
                 )
 
             activity.name = original["name"]
+            activity.description = original.get("description", "")
             activity.activity_type = original["activity_type"]
             activity.location_status = original.get(
                 "location_status",
@@ -120,9 +128,18 @@ def find_geographic_issues(
 
 
 
-def find_activity_load_issues(trip: TravelItinerary) -> list[str]:
-    """Find days with incompatible activity durations."""
+def find_activity_load_issues(
+    trip: TravelItinerary,
+    pace: str = "balanced",
+) -> list[str]:
+    """Find days with incompatible durations or excessive activity counts."""
     issues = []
+
+    max_activities = {
+        "relaxed": 2,
+        "balanced": 3,
+        "active": 4,
+    }[pace]
 
     for day in trip.days:
         full_day_activities = [
@@ -139,19 +156,26 @@ def find_activity_load_issues(trip: TravelItinerary) -> list[str]:
             )
             continue
 
-        half_day_activities = [
+        substantial_activities = [
             activity.name
             for activity in day.activities
-            if activity.duration_type == "half_day"
+            if activity.duration_type in {"half_day", "unknown"}
         ]
 
-        if len(half_day_activities) > 2:
+        if len(substantial_activities) > 2:
             issues.append(
-                f"Day {day.day}: too many half-day activities "
-                f"({', '.join(half_day_activities)})."
+                f"Day {day.day}: too many half-day or unknown-duration "
+                f"activities ({', '.join(substantial_activities)})."
+            )
+
+        if len(day.activities) > max_activities:
+            issues.append(
+                f"Day {day.day}: {len(day.activities)} activities "
+                f"exceed the {pace} pace limit of {max_activities}."
             )
 
     return issues
+
 
 RESTRICTED_REPEATED_ACTIVITY_TYPES = {
     "elephant_sanctuary",
@@ -220,6 +244,147 @@ def total_trip_driving_minutes(trip: TravelItinerary) -> float:
         for day in trip.days
         if day.activities
     )
+
+def total_driving_excess_minutes(
+    trip: TravelItinerary,
+    max_minutes: int = MAX_TOTAL_DAILY_DRIVING_MINUTES,
+) -> float:
+    """Calculate total driving minutes exceeding the daily target."""
+    return sum(
+        max(0, day.total_driving_duration_minutes - max_minutes)
+        if day.total_driving_duration_minutes is not None
+        else float("inf")
+        for day in trip.days
+        if day.activities
+    )
+
+
+def reset_route_data(trip: TravelItinerary) -> None:
+    """Discard route values after changing the itinerary."""
+    for day in trip.days:
+        day.max_distance_km = calculate_day_max_distance(day)
+        day.driving_distance_km = None
+        day.driving_duration_minutes = None
+        day.driving_status = "unknown"
+        day.total_driving_distance_km = None
+        day.total_driving_duration_minutes = None
+
+
+def find_planning_issues(
+    trip: TravelItinerary,
+    pace: str = "balanced",
+) -> list[str]:
+    """Find itinerary issues that do not require route API calls."""
+    return (
+        find_geographic_issues(trip)
+        + find_activity_load_issues(trip, pace)
+        + find_repetitive_experience_issues(trip)
+    )
+
+async def repair_trip_plan(
+    trip: TravelItinerary,
+    preferences: TravelPreferences,
+    recommendations: list[dict],
+) -> TravelItinerary | None:
+    """Repair an invalid itinerary using limited activity edits."""
+    original_count = sum(len(day.activities) for day in trip.days)
+
+    best: TravelItinerary | None = None
+    best_score: tuple[int, int] | None = None
+    checked = 0
+    max_candidates = 80
+
+    for source_index, source_day in enumerate(trip.days):
+        for activity_index in range(len(source_day.activities)):
+            destinations = [
+                source_index,
+                *(
+                    index
+                    for index in range(len(trip.days))
+                    if index != source_index
+                ),
+                None,
+            ]
+
+            for destination_index in destinations:
+                if destination_index == source_index:
+                    positions = range(len(source_day.activities))
+                elif destination_index is None:
+                    positions = (0,)
+                else:
+                    positions = range(
+                        len(trip.days[destination_index].activities) + 1
+                    )
+
+                for position in positions:
+                    if (
+                        destination_index == source_index
+                        and position == activity_index
+                    ):
+                        continue
+
+                    if checked >= max_candidates:
+                        return best
+
+                    checked += 1
+
+                    candidate = trip.model_copy(deep=True)
+
+                    activity = candidate.days[
+                        source_index
+                    ].activities.pop(activity_index)
+
+                    if destination_index is not None:
+                        candidate.days[
+                            destination_index
+                        ].activities.insert(position, activity)
+
+                    reset_route_data(candidate)
+
+                    if find_planning_issues(candidate, preferences.pace):
+                        continue
+
+                    validate_trip_plan(
+                        candidate,
+                        preferences,
+                        recommendations,
+                    )
+
+                    await add_driving_routes(candidate)
+
+                    if find_driving_issues(candidate):
+                        continue
+
+                    if any(
+                        len(day.activities) > 1
+                        and day.driving_status != "verified"
+                        for day in candidate.days
+                    ):
+                        continue
+
+                    count = sum(
+                        len(day.activities)
+                        for day in candidate.days
+                    )
+
+                    minutes = sum(
+                        day.driving_duration_minutes or 0
+                        for day in candidate.days
+                    )
+
+                    score = (
+                        original_count - count,
+                        minutes,
+                    )
+
+                    if best_score is None or score < best_score:
+                        best = candidate
+                        best_score = score
+
+                        if score == (0, 0):
+                            return best
+
+    return best
 
 
 async def generate_trip_plan(
@@ -347,7 +512,7 @@ JSON structure:
         validate_trip_plan(trip, preferences, recommendations)
 
         geographic_issues = find_geographic_issues(trip)
-        activity_issues = find_activity_load_issues(trip)
+        activity_issues = find_activity_load_issues(trip, preferences.pace)
         repetition_issues = find_repetitive_experience_issues(trip)
 
         issues = geographic_issues + activity_issues + repetition_issues
@@ -372,9 +537,16 @@ JSON structure:
                     # Long driving times are quality issues, not validation errors.
                     if (
                         fallback_trip is None
-                        or total_trip_driving_minutes(trip)
-                        < total_trip_driving_minutes(fallback_trip)
+                        or (
+                            total_driving_excess_minutes(trip),
+                            total_trip_driving_minutes(trip),
+                        )
+                        < (
+                            total_driving_excess_minutes(fallback_trip),
+                            total_trip_driving_minutes(fallback_trip),
+                        )
                     ):
+                    
                         fallback_trip = trip
 
                     issues = driving_issues
@@ -386,6 +558,23 @@ JSON structure:
         if attempt == MAX_GENERATION_ATTEMPTS - 1:
             if fallback_trip is not None:
                 return fallback_trip
+
+            repaired = await repair_trip_plan(
+                trip,
+                preferences,
+                recommendations,
+            )
+            
+            if repaired is not None:
+                origin = await find_trip_origin(preferences.destination)
+                
+                if origin is not None:
+                    repaired = await add_total_driving_routes(
+                        repaired,
+                        origin_latitude=origin[0],
+                        origin_longitude=origin[1],
+                    )
+                return repaired
 
             raise ValueError(
                 "The trip plan failed route validation: "
