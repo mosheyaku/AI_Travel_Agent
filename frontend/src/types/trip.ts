@@ -28,6 +28,11 @@ export interface ItineraryActivity {
   longitude: number | null;
   google_place_id: string | null;
   duration_type: "short" | "half_day" | "full_day" | "unknown";
+
+  start_time: string | null;
+  end_time: string | null;
+  estimated_duration_minutes: number | null;
+  travel_minutes_from_previous: number | null;
 }
 
 export interface ItineraryDay {

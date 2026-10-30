@@ -102,6 +102,7 @@ function ActivitySources({
   );
 }
 
+
 export default function ItineraryView({
   data,
 }: ItineraryViewProps) {
@@ -243,6 +244,65 @@ export default function ItineraryView({
                         {activity.name}
                       </Typography>
 
+                      {activity.start_time &&
+                        activity.end_time && (
+                          <Stack
+                            direction="row"
+                            spacing={1}
+                            sx={{
+                              alignItems: "center",
+                              mb: 1.5,
+                              flexWrap: "wrap",
+                              gap: 1,
+                            }}
+                          >
+                            <Chip
+                              icon={<AccessTime />}
+                              label={`${activity.start_time} – ${activity.end_time}`}
+                              size="small"
+                              color="primary"
+                              sx={{ fontWeight: 700 }}
+                            />
+
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                            >
+                              Estimated schedule
+                            </Typography>
+                          </Stack>
+                        )}
+
+                      {index > 0 &&
+                        activity.travel_minutes_from_previous !=
+                          null && (
+                          <Stack
+                            direction="row"
+                            spacing={1}
+                            sx={{
+                              alignItems: "center",
+                              mb: 1.5,
+                            }}
+                          >
+                            <DirectionsCar
+                              sx={{
+                                fontSize: 17,
+                                color: "text.secondary",
+                              }}
+                            />
+
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                            >
+                              {
+                                activity.travel_minutes_from_previous
+                              }{" "}
+                              min drive from previous stop
+                            </Typography>
+                          </Stack>
+                        )}
+
                       <Typography
                         variant="body2"
                         color="text.secondary"
@@ -252,11 +312,11 @@ export default function ItineraryView({
                       </Typography>
 
                       <Stack
-                      direction="row"
-                      sx={{
-                        mt: 2,
-                        flexWrap: "wrap",
-                        gap: 1,
+                        direction="row"
+                        sx={{
+                          mt: 2,
+                          flexWrap: "wrap",
+                          gap: 1,
                         }}
                       >
                         <Chip
@@ -272,8 +332,9 @@ export default function ItineraryView({
                         <Chip
                           icon={<AccessTime />}
                           label={
-                            durationLabels[activity.duration_type] ??
-                            "Duration unknown"
+                            durationLabels[
+                              activity.duration_type
+                            ] ?? "Duration unknown"
                           }
                           size="small"
                           variant="outlined"
