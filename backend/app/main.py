@@ -5,7 +5,7 @@ from app.search import search_attractions
 from app.recommendations import recommend_attractions
 from app.schemas import TravelPreferences
 from app.trip_planning import build_attraction_queries, get_attraction_search_limit
-from app.trip_generator import generate_trip_plan
+from app.travel_graph import travel_graph
 
 app = FastAPI(
     title=settings.app_name,
@@ -72,24 +72,15 @@ async def trip_attractions(
 async def generate_trip(
     preferences: TravelPreferences,
 ) -> dict:
-    """Generate a trip plan with estimated driving routes."""
-    queries = build_attraction_queries(preferences)
-
+    """Generate a trip using the LangGraph workflow."""
     try:
-        attraction_data = await recommend_attractions(
-            queries,
-            destination=preferences.destination,
-            max_attractions=get_attraction_search_limit(preferences),
-        )
-
-        trip_plan = await generate_trip_plan(
-            preferences,
-            attraction_data["recommendations"],
-        )
+        result = await travel_graph.ainvoke({
+            "preferences": preferences,
+        })
 
         return {
-            "trip": trip_plan.model_dump(),
-            "sources": attraction_data["sources"],
+            "trip": result["trip"],
+            "sources": result["sources"],
         }
 
     except ValueError as exc:

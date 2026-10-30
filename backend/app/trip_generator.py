@@ -1,33 +1,39 @@
 
 import json
 
+import httpx
 from pydantic import ValidationError
 
 from app.attraction_clustering import (
     MAX_CLUSTER_DISTANCE_KM,
     build_attraction_clusters,
 )
+from app.attraction_locations import find_destination
+from app.geocoding import search_locations
 from app.itinerary_distances import (
     build_attraction_distances,
     calculate_day_max_distance,
 )
+from app.itinerary_routes import (
+    MAX_TOTAL_DAILY_DRIVING_MINUTES,
+    add_driving_routes,
+    add_total_driving_routes,
+    find_driving_issues,
+    find_total_driving_issues,
+)
 from app.llm import generate_text
 from app.location_validation import LocationStatus
 from app.schemas import TravelItinerary, TravelPreferences
-from app.itinerary_routes import (
-    MAX_DAILY_DRIVING_MINUTES,
-    MAX_TOTAL_DAILY_DRIVING_MINUTES,
-    add_driving_routes,
-    find_driving_issues,
-    add_total_driving_routes,
-    find_total_driving_issues,
-)
-import httpx
-
-from app.geocoding import search_locations
-from app.attraction_locations import find_destination
 
 MAX_GENERATION_ATTEMPTS = 2
+
+RESTRICTED_REPEATED_ACTIVITY_TYPES = {
+    "elephant_sanctuary",
+    "zipline",
+    "rafting",
+    "cooking_class",
+    "water_park",
+}
 
 
 def validate_trip_plan(
@@ -127,7 +133,6 @@ def find_geographic_issues(
     return issues
 
 
-
 def find_activity_load_issues(
     trip: TravelItinerary,
     pace: str = "balanced",
@@ -177,15 +182,6 @@ def find_activity_load_issues(
     return issues
 
 
-RESTRICTED_REPEATED_ACTIVITY_TYPES = {
-    "elephant_sanctuary",
-    "zipline",
-    "rafting",
-    "cooking_class",
-    "water_park",
-}
-
-
 def find_repetitive_experience_issues(
     trip: TravelItinerary,
 ) -> list[str]:
@@ -221,7 +217,6 @@ async def find_trip_origin(
     destination: str,
 ) -> tuple[float, float] | None:
     """Find an approximate starting point for the destination."""
-
     try:
         candidates = await search_locations(destination, "")
     except (httpx.HTTPError, TimeoutError):
@@ -244,6 +239,7 @@ def total_trip_driving_minutes(trip: TravelItinerary) -> float:
         for day in trip.days
         if day.activities
     )
+
 
 def total_driving_excess_minutes(
     trip: TravelItinerary,
@@ -280,6 +276,7 @@ def find_planning_issues(
         + find_activity_load_issues(trip, pace)
         + find_repetitive_experience_issues(trip)
     )
+
 
 async def repair_trip_plan(
     trip: TravelItinerary,
@@ -387,28 +384,11 @@ async def repair_trip_plan(
     return best
 
 
-async def generate_trip_plan(
+def build_trip_prompt(
     preferences: TravelPreferences,
     recommendations: list[dict],
-) -> TravelItinerary:
-    """Generate and geographically validate a daily trip plan."""
-
-    verified_recommendations = [
-        recommendation
-        for recommendation in recommendations
-        if recommendation.get("location_status") == LocationStatus.VERIFIED
-        and recommendation.get("latitude") is not None
-        and recommendation.get("longitude") is not None
-        and recommendation.get("google_place_id")
-    ]
-
-    if not verified_recommendations:
-        raise ValueError(
-            "No attractions with verified locations are available."
-        )
-
-    recommendations = verified_recommendations
-
+) -> str:
+    """Build the itinerary generation prompt."""
     attractions_text = json.dumps(
         recommendations,
         ensure_ascii=False,
@@ -420,7 +400,7 @@ async def generate_trip_plan(
     clusters = build_attraction_clusters(recommendations)
     clusters_text = json.dumps(clusters, ensure_ascii=False)
 
-    prompt = f"""
+    return f"""
 You are a travel planning assistant.
 
 Create a {preferences.duration_days}-day trip plan for
@@ -495,65 +475,114 @@ JSON structure:
 }}
 """
 
+
+async def generate_trip_candidate(
+    prompt: str,
+    preferences: TravelPreferences,
+    recommendations: list[dict],
+) -> TravelItinerary:
+    """Generate and validate one itinerary candidate."""
+    response_text = await generate_text(prompt)
+
+    try:
+        trip = TravelItinerary.model_validate(
+            json.loads(response_text)
+        )
+    except (json.JSONDecodeError, ValidationError) as exc:
+        raise ValueError(
+            "The model returned an invalid trip plan."
+        ) from exc
+
+    validate_trip_plan(trip, preferences, recommendations)
+
+    return trip
+
+async def evaluate_trip_candidate(
+    trip: TravelItinerary,
+    preferences: TravelPreferences,
+) -> list[str]:
+    """Evaluate itinerary constraints and driving times."""
+    issues = find_planning_issues(trip, preferences.pace)
+
+    if issues:
+        return issues
+
+    await add_driving_routes(trip)
+    issues = find_driving_issues(trip)
+
+    if issues:
+        return issues
+
+    origin = await find_trip_origin(preferences.destination)
+
+    if origin is not None:
+        await add_total_driving_routes(
+            trip,
+            origin_latitude=origin[0],
+            origin_longitude=origin[1],
+        )
+
+        return find_total_driving_issues(trip)
+
+    return []
+    
+async def generate_trip_plan(
+    preferences: TravelPreferences,
+    recommendations: list[dict],
+) -> TravelItinerary:
+    """Generate and validate a daily trip plan."""
+    verified_recommendations = [
+        recommendation
+        for recommendation in recommendations
+        if recommendation.get("location_status") == LocationStatus.VERIFIED
+        and recommendation.get("latitude") is not None
+        and recommendation.get("longitude") is not None
+        and recommendation.get("google_place_id")
+    ]
+
+    if not verified_recommendations:
+        raise ValueError(
+            "No attractions with verified locations are available."
+        )
+
+    recommendations = verified_recommendations
+    prompt = build_trip_prompt(preferences, recommendations)
+
     fallback_trip = None
 
     for attempt in range(MAX_GENERATION_ATTEMPTS):
-        response_text = await generate_text(prompt)
+        trip = await generate_trip_candidate(
+            prompt,
+            preferences,
+            recommendations,
+        )
 
-        try:
-            trip = TravelItinerary.model_validate(
-                json.loads(response_text)
-            )
-        except (json.JSONDecodeError, ValidationError) as exc:
-            raise ValueError(
-                "The model returned an invalid trip plan."
-            ) from exc
-
-        validate_trip_plan(trip, preferences, recommendations)
-
-        geographic_issues = find_geographic_issues(trip)
-        activity_issues = find_activity_load_issues(trip, preferences.pace)
-        repetition_issues = find_repetitive_experience_issues(trip)
-
-        issues = geographic_issues + activity_issues + repetition_issues
+        issues = await evaluate_trip_candidate(trip, preferences)
 
         if not issues:
-            trip = await add_driving_routes(trip)
-            issues = find_driving_issues(trip)
+            return trip
 
-        if not issues:
-            origin = await find_trip_origin(preferences.destination)
+        # Only daily round-trip driving limits are soft quality issues.
+        planning_issues = find_planning_issues(trip, preferences.pace)
+        driving_issues = find_driving_issues(trip)
 
-            if origin is not None:
-                trip = await add_total_driving_routes(
-                    trip,
-                    origin_latitude=origin[0],
-                    origin_longitude=origin[1],
+        if (
+            not planning_issues
+            and not driving_issues
+            and find_total_driving_issues(trip)
+        ):
+            if (
+                fallback_trip is None
+                or (
+                    total_driving_excess_minutes(trip),
+                    total_trip_driving_minutes(trip),
                 )
-
-                driving_issues = find_total_driving_issues(trip)
-
-                if driving_issues:
-                    # Long driving times are quality issues, not validation errors.
-                    if (
-                        fallback_trip is None
-                        or (
-                            total_driving_excess_minutes(trip),
-                            total_trip_driving_minutes(trip),
-                        )
-                        < (
-                            total_driving_excess_minutes(fallback_trip),
-                            total_trip_driving_minutes(fallback_trip),
-                        )
-                    ):
-                    
-                        fallback_trip = trip
-
-                    issues = driving_issues
-                else:
-                    return trip
-            else:
-                return trip
+                < (
+                    total_driving_excess_minutes(fallback_trip),
+                    total_trip_driving_minutes(fallback_trip),
+                )
+            ):
+                fallback_trip = trip
 
         if attempt == MAX_GENERATION_ATTEMPTS - 1:
             if fallback_trip is not None:
@@ -564,16 +593,17 @@ JSON structure:
                 preferences,
                 recommendations,
             )
-            
+
             if repaired is not None:
                 origin = await find_trip_origin(preferences.destination)
-                
+
                 if origin is not None:
                     repaired = await add_total_driving_routes(
                         repaired,
                         origin_latitude=origin[0],
                         origin_longitude=origin[1],
                     )
+
                 return repaired
 
             raise ValueError(

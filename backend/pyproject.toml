@@ -9,6 +9,7 @@ dependencies = [
     "httpx>=0.28.1",
     "langchain-openai>=1.7.2",
     "langchain-tavily>=0.2.18",
+    "langgraph>=1.2.16",
     "openai>=3.35.1",
     "pydantic>=2.14.1",
     "pydantic-settings>=2.16.0",
