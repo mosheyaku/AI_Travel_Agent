@@ -72,8 +72,15 @@ class ItineraryActivity(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     google_place_id: str | None = None
-    duration_type: Literal["short", "half_day", "full_day", "unknown"] = "unknown"
+    duration_type: Literal[
+        "short", "half_day", "full_day", "unknown"
+    ] = "unknown"
 
+    # Estimated schedule, calculated after itinerary generation.
+    start_time: str | None = None
+    end_time: str | None = None
+    estimated_duration_minutes: int | None = None
+    travel_minutes_from_previous: int | None = None
 
 class ItineraryDay(BaseModel):
     day: int = Field(ge=1)

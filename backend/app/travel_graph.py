@@ -24,6 +24,7 @@ from app.trip_planning import (
     build_attraction_queries,
     get_attraction_search_limit,
 )
+from app.itinerary_schedule import add_itinerary_schedule
 
 
 class TravelState(TypedDict, total=False):
@@ -175,6 +176,14 @@ def append_feedback_node(state: TravelState) -> dict:
         )
     }
 
+async def schedule_node(state: TravelState) -> dict:
+    """Add estimated activity schedules to the final itinerary."""
+    trip = TravelItinerary.model_validate(state["trip"])
+
+    await add_itinerary_schedule(trip)
+
+    return {"trip": trip.model_dump()}
+
 
 async def repair_node(state: TravelState) -> dict:
     """Repair the final candidate or return the best soft fallback."""
@@ -223,6 +232,7 @@ builder.add_node("generate", generate_node)
 builder.add_node("evaluate", evaluate_node)
 builder.add_node("feedback", append_feedback_node)
 builder.add_node("repair", repair_node)
+builder.add_node("schedule", schedule_node)
 
 builder.add_edge(START, "recommend")
 builder.add_edge("recommend", "generate")
@@ -232,13 +242,14 @@ builder.add_conditional_edges(
     "evaluate",
     decide_next,
     {
-        "finish": END,
+        "finish": "schedule",
         "retry": "feedback",
         "repair": "repair",
     },
 )
 
 builder.add_edge("feedback", "generate")
-builder.add_edge("repair", END)
+builder.add_edge("repair", "schedule")
+builder.add_edge("schedule", END)
 
 travel_graph = builder.compile()
