@@ -73,6 +73,7 @@ def validate_trip_plan(
                 )
 
             activity.name = original["name"]
+            activity.description = original.get("description", "")
             activity.activity_type = original["activity_type"]
             activity.location_status = original.get(
                 "location_status",
@@ -128,7 +129,7 @@ def find_geographic_issues(
 
 
 def find_activity_load_issues(trip: TravelItinerary) -> list[str]:
-    """Find days with incompatible activity durations."""
+    """Find days with incompatible or uncertain activity durations."""
     issues = []
 
     for day in trip.days:
@@ -146,16 +147,16 @@ def find_activity_load_issues(trip: TravelItinerary) -> list[str]:
             )
             continue
 
-        half_day_activities = [
+        substantial_activities = [
             activity.name
             for activity in day.activities
-            if activity.duration_type == "half_day"
+            if activity.duration_type in {"half_day", "unknown"}
         ]
 
-        if len(half_day_activities) > 2:
+        if len(substantial_activities) > 2:
             issues.append(
-                f"Day {day.day}: too many half-day activities "
-                f"({', '.join(half_day_activities)})."
+                f"Day {day.day}: too many half-day or unknown-duration "
+                f"activities ({', '.join(substantial_activities)})."
             )
 
     return issues

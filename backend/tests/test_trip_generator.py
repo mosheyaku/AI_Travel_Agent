@@ -368,6 +368,7 @@ async def test_preserves_verified_attraction_location(monkeypatch):
     assert activity.latitude == 19.2171729
     assert activity.longitude == 98.860038
     assert activity.location_status == LocationStatus.VERIFIED
+    assert activity.description == "Visit an elephant sanctuary in Chiang Mai."
 
 
 @pytest.mark.anyio
@@ -681,7 +682,7 @@ def test_rejects_three_half_day_activities():
     issues = find_activity_load_issues(trip)
 
     assert len(issues) == 1
-    assert "too many half-day activities" in issues[0]
+    assert "too many half-day or unknown-duration activities" in issues[0]
 
 
 def test_allows_two_half_day_activities():
@@ -784,7 +785,7 @@ async def test_retries_when_day_has_too_many_half_day_activities(
     )
 
     assert len(prompts) == 2
-    assert "too many half-day activities" in prompts[1]
+    assert "too many half-day or unknown-duration activities" in prompts[1]
     assert [len(day.activities) for day in trip.days] == [2, 1]
 
 
@@ -946,3 +947,39 @@ async def test_prefers_trip_with_less_daily_driving_excess(monkeypatch):
     assert trip.days[0].total_driving_duration_minutes == 190
     assert trip.days[1].total_driving_duration_minutes == 170
     
+
+@pytest.mark.parametrize(
+    ("durations", "should_reject"),
+    [
+        (["unknown", "unknown", "unknown"], True),
+        (["half_day", "unknown", "unknown"], True),
+        (["half_day", "half_day", "unknown"], True),
+        (["unknown", "unknown"], False),
+        (["half_day", "unknown"], False),
+        (["short", "short", "unknown"], False),
+    ],
+)
+def test_activity_load_with_unknown_durations(
+    durations,
+    should_reject,
+):
+    trip = TravelItinerary.model_validate({
+        "destination": "Chiang Mai",
+        "days": [{
+            "day": 1,
+            "activities": [
+                {
+                    "name": f"Attraction {index}",
+                    "activity_type": "other",
+                    "description": "Test attraction.",
+                    "source_indices": [index],
+                    "duration_type": duration,
+                }
+                for index, duration in enumerate(durations, start=1)
+            ],
+        }],
+    })
+
+    issues = find_activity_load_issues(trip)
+
+    assert bool(issues) == should_reject
