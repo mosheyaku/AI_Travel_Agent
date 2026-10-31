@@ -1,8 +1,8 @@
-
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 from app.location_validation import LocationStatus
+from datetime import date as Date
 
 AttractionCategory = Literal[
     "adventure",
@@ -19,8 +19,9 @@ class AttractionRecommendation(BaseModel):
     name: str = Field(description="Name of the attraction")
     category: AttractionCategory
     activity_type: str = Field(
-    min_length=1,
-    description="Specific activity type in lowercase snake_case",)
+        min_length=1,
+        description="Specific activity type in lowercase snake_case",
+    )
     description: str = Field(description="Description based on the sources")
     relevance_reason: str = Field(
         description="Why this attraction matches the user's request"
@@ -40,7 +41,7 @@ class AttractionRecommendation(BaseModel):
 
 class AttractionRecommendations(BaseModel):
     recommendations: list[AttractionRecommendation]
-    
+
     @model_validator(mode="after")
     def validate_unique_names(self):
         names = [
@@ -57,9 +58,32 @@ class AttractionRecommendations(BaseModel):
 class TravelPreferences(BaseModel):
     destination: str = Field(min_length=2)
     duration_days: int = Field(ge=1, le=30)
+    start_date: Date | None = None
     budget: float | None = Field(default=None, gt=0)
     interests: list[AttractionCategory] = Field(min_length=1)
     pace: Literal["relaxed", "balanced", "active"] = "balanced"
+
+    accommodation_latitude: float | None = Field(
+        default=None,
+        ge=-90,
+        le=90,
+    )
+    accommodation_longitude: float | None = Field(
+        default=None,
+        ge=-180,
+        le=180,
+    )
+
+    @model_validator(mode="after")
+    def validate_accommodation_coordinates(self):
+        if (self.accommodation_latitude is None) != (
+            self.accommodation_longitude is None
+        ):
+            raise ValueError(
+                "Accommodation latitude and longitude must be provided together."
+            )
+
+        return self
 
 
 class ItineraryActivity(BaseModel):
@@ -72,9 +96,7 @@ class ItineraryActivity(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     google_place_id: str | None = None
-    duration_type: Literal[
-        "short", "half_day", "full_day", "unknown"
-    ] = "unknown"
+    duration_type: Literal["short", "half_day", "full_day", "unknown"] = "unknown"
 
     # Estimated schedule, calculated after itinerary generation.
     start_time: str | None = None
@@ -82,22 +104,30 @@ class ItineraryActivity(BaseModel):
     estimated_duration_minutes: int | None = None
     travel_minutes_from_previous: int | None = None
 
+    opening_hours_status: Literal["verified", "conflict", "unknown"] = "unknown"
+
+
 class ItineraryDay(BaseModel):
     day: int = Field(ge=1)
+    date: Date | None = None
+
+    departure_time: str | None = None
+    return_time: str | None = None
+    travel_minutes_to_first: int | None = None
+    travel_minutes_to_accommodation: int | None = None
+
     activities: list[ItineraryActivity]
     max_distance_km: float | None = None
 
     # Driving between consecutive attractions only.
     driving_distance_km: float | None = None
     driving_duration_minutes: int | None = None
-    driving_status: Literal[
-        "verified", "exceeds_limit", "unknown"
-    ] = "unknown"
+    driving_status: Literal["verified", "exceeds_limit", "unknown"] = "unknown"
 
     # Round-trip driving from the destination city center.
     total_driving_distance_km: float | None = None
     total_driving_duration_minutes: int | None = None
-    
+
 
 class TravelItinerary(BaseModel):
     destination: str

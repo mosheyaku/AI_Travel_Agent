@@ -1,4 +1,3 @@
-
 import json
 
 import httpx
@@ -46,9 +45,7 @@ def validate_trip_plan(
     actual_days = [day.day for day in trip.days]
 
     if actual_days != expected_days:
-        raise ValueError(
-            "The trip plan does not match the requested number of days."
-        )
+        raise ValueError("The trip plan does not match the requested number of days.")
 
     allowed_attractions = {
         recommendation["name"].strip().casefold(): recommendation
@@ -116,15 +113,11 @@ def find_geographic_issues(
         if len(verified_activities) < 2:
             continue
 
-        verified_day = day.model_copy(
-            update={"activities": verified_activities}
-        )
+        verified_day = day.model_copy(update={"activities": verified_activities})
         distance = calculate_day_max_distance(verified_day)
 
         if distance is not None and distance > max_distance_km:
-            names = ", ".join(
-                activity.name for activity in verified_activities
-            )
+            names = ", ".join(activity.name for activity in verified_activities)
             issues.append(
                 f"Day {day.day}: {names} "
                 f"are spread across {distance} km straight-line."
@@ -230,12 +223,30 @@ async def find_trip_origin(
     return location.latitude, location.longitude
 
 
+async def resolve_trip_origin(
+    preferences: TravelPreferences,
+) -> tuple[float, float] | None:
+    """Use accommodation coordinates or fall back to the city center."""
+    if (
+        preferences.accommodation_latitude is not None
+        and preferences.accommodation_longitude is not None
+    ):
+        return (
+            preferences.accommodation_latitude,
+            preferences.accommodation_longitude,
+        )
+
+    return await find_trip_origin(preferences.destination)
+
+
 def total_trip_driving_minutes(trip: TravelItinerary) -> float:
     """Calculate total driving time, penalizing unknown durations."""
     return sum(
-        day.total_driving_duration_minutes
-        if day.total_driving_duration_minutes is not None
-        else float("inf")
+        (
+            day.total_driving_duration_minutes
+            if day.total_driving_duration_minutes is not None
+            else float("inf")
+        )
         for day in trip.days
         if day.activities
     )
@@ -247,9 +258,11 @@ def total_driving_excess_minutes(
 ) -> float:
     """Calculate total driving minutes exceeding the daily target."""
     return sum(
-        max(0, day.total_driving_duration_minutes - max_minutes)
-        if day.total_driving_duration_minutes is not None
-        else float("inf")
+        (
+            max(0, day.total_driving_duration_minutes - max_minutes)
+            if day.total_driving_duration_minutes is not None
+            else float("inf")
+        )
         for day in trip.days
         if day.activities
     )
@@ -295,11 +308,7 @@ async def repair_trip_plan(
         for activity_index in range(len(source_day.activities)):
             destinations = [
                 source_index,
-                *(
-                    index
-                    for index in range(len(trip.days))
-                    if index != source_index
-                ),
+                *(index for index in range(len(trip.days)) if index != source_index),
                 None,
             ]
 
@@ -309,15 +318,10 @@ async def repair_trip_plan(
                 elif destination_index is None:
                     positions = (0,)
                 else:
-                    positions = range(
-                        len(trip.days[destination_index].activities) + 1
-                    )
+                    positions = range(len(trip.days[destination_index].activities) + 1)
 
                 for position in positions:
-                    if (
-                        destination_index == source_index
-                        and position == activity_index
-                    ):
+                    if destination_index == source_index and position == activity_index:
                         continue
 
                     if checked >= max_candidates:
@@ -327,14 +331,14 @@ async def repair_trip_plan(
 
                     candidate = trip.model_copy(deep=True)
 
-                    activity = candidate.days[
-                        source_index
-                    ].activities.pop(activity_index)
+                    activity = candidate.days[source_index].activities.pop(
+                        activity_index
+                    )
 
                     if destination_index is not None:
-                        candidate.days[
-                            destination_index
-                        ].activities.insert(position, activity)
+                        candidate.days[destination_index].activities.insert(
+                            position, activity
+                        )
 
                     reset_route_data(candidate)
 
@@ -353,20 +357,15 @@ async def repair_trip_plan(
                         continue
 
                     if any(
-                        len(day.activities) > 1
-                        and day.driving_status != "verified"
+                        len(day.activities) > 1 and day.driving_status != "verified"
                         for day in candidate.days
                     ):
                         continue
 
-                    count = sum(
-                        len(day.activities)
-                        for day in candidate.days
-                    )
+                    count = sum(len(day.activities) for day in candidate.days)
 
                     minutes = sum(
-                        day.driving_duration_minutes or 0
-                        for day in candidate.days
+                        day.driving_duration_minutes or 0 for day in candidate.days
                     )
 
                     score = (
@@ -485,17 +484,14 @@ async def generate_trip_candidate(
     response_text = await generate_text(prompt)
 
     try:
-        trip = TravelItinerary.model_validate(
-            json.loads(response_text)
-        )
+        trip = TravelItinerary.model_validate(json.loads(response_text))
     except (json.JSONDecodeError, ValidationError) as exc:
-        raise ValueError(
-            "The model returned an invalid trip plan."
-        ) from exc
+        raise ValueError("The model returned an invalid trip plan.") from exc
 
     validate_trip_plan(trip, preferences, recommendations)
 
     return trip
+
 
 async def evaluate_trip_candidate(
     trip: TravelItinerary,
@@ -513,7 +509,7 @@ async def evaluate_trip_candidate(
     if issues:
         return issues
 
-    origin = await find_trip_origin(preferences.destination)
+    origin = await resolve_trip_origin(preferences)
 
     if origin is not None:
         await add_total_driving_routes(
@@ -525,7 +521,8 @@ async def evaluate_trip_candidate(
         return find_total_driving_issues(trip)
 
     return []
-    
+
+
 async def generate_trip_plan(
     preferences: TravelPreferences,
     recommendations: list[dict],
@@ -541,9 +538,7 @@ async def generate_trip_plan(
     ]
 
     if not verified_recommendations:
-        raise ValueError(
-            "No attractions with verified locations are available."
-        )
+        raise ValueError("No attractions with verified locations are available.")
 
     recommendations = verified_recommendations
     prompt = build_trip_prompt(preferences, recommendations)
@@ -571,16 +566,12 @@ async def generate_trip_plan(
             and not driving_issues
             and find_total_driving_issues(trip)
         ):
-            if (
-                fallback_trip is None
-                or (
-                    total_driving_excess_minutes(trip),
-                    total_trip_driving_minutes(trip),
-                )
-                < (
-                    total_driving_excess_minutes(fallback_trip),
-                    total_trip_driving_minutes(fallback_trip),
-                )
+            if fallback_trip is None or (
+                total_driving_excess_minutes(trip),
+                total_trip_driving_minutes(trip),
+            ) < (
+                total_driving_excess_minutes(fallback_trip),
+                total_trip_driving_minutes(fallback_trip),
             ):
                 fallback_trip = trip
 
@@ -595,7 +586,7 @@ async def generate_trip_plan(
             )
 
             if repaired is not None:
-                origin = await find_trip_origin(preferences.destination)
+                origin = await resolve_trip_origin(preferences)
 
                 if origin is not None:
                     repaired = await add_total_driving_routes(
@@ -607,8 +598,7 @@ async def generate_trip_plan(
                 return repaired
 
             raise ValueError(
-                "The trip plan failed route validation: "
-                + "; ".join(issues)
+                "The trip plan failed route validation: " + "; ".join(issues)
             )
 
         prompt += (

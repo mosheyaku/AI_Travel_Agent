@@ -55,3 +55,55 @@ def test_rejects_invalid_travel_preferences():
     )
 
     assert response.status_code == 422
+
+
+from unittest.mock import AsyncMock
+
+from app import main
+
+
+def test_accommodation_suggestions(monkeypatch):
+    mock_search = AsyncMock(
+        return_value=[
+            {
+                "place_id": "hotel-123",
+                "name": "Example Hotel",
+                "address": "Chiang Mai, Thailand",
+                "latitude": 18.79,
+                "longitude": 98.98,
+            }
+        ]
+    )
+
+    monkeypatch.setattr(
+        main,
+        "search_accommodations",
+        mock_search,
+    )
+
+    client = TestClient(main.app)
+
+    response = client.get(
+        "/places/accommodations",
+        params={
+            "query": "Example Hotel",
+            "destination": "Chiang Mai",
+        },
+    )
+
+    assert response.status_code == 200
+
+    assert response.json() == [
+        {
+            "place_id": "hotel-123",
+            "name": "Example Hotel",
+            "address": "Chiang Mai, Thailand",
+            "latitude": 18.79,
+            "longitude": 98.98,
+        }
+    ]
+
+    mock_search.assert_awaited_once_with(
+        "Example Hotel",
+        "Chiang Mai",
+    )
