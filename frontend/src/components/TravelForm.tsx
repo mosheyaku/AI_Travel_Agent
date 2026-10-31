@@ -1,7 +1,8 @@
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 import {
+  Autocomplete,
   Box,
   Button,
   CircularProgress,
@@ -31,6 +32,11 @@ import type {
   Interest,
   Pace,
 } from "../types/trip";
+
+import {
+  searchAccommodations,
+  type AccommodationSuggestion,
+} from "../api/places";
 
 const interests = [
   { value: "adventure", label: "Adventure", icon: Hiking },
@@ -74,8 +80,68 @@ export default function TravelForm({
 }: TravelFormProps) {
   const [destination, setDestination] = useState("");
   const [durationDays, setDurationDays] = useState(5);
+  const [startDate, setStartDate] = useState("");
   const [selectedInterests, setSelectedInterests] = useState<Interest[]>([]);
   const [pace, setPace] = useState<Pace>("balanced");
+
+  const [accommodationInput, setAccommodationInput] = useState("");
+  const [accommodation, setAccommodation] =
+    useState<AccommodationSuggestion | null>(null);
+
+  const [accommodationOptions, setAccommodationOptions] = useState<
+    AccommodationSuggestion[]
+  >([]);
+
+  const [accommodationLoading, setAccommodationLoading] = useState(false);
+  const [accommodationError, setAccommodationError] = useState(false);
+
+  useEffect(() => {
+    const query = accommodationInput.trim();
+    const city = destination.trim();
+    console.log("Accommodation search state:", {
+      query,
+      city,
+      accommodation,
+    });
+
+    if (query.length < 3 || city.length < 2 || accommodation) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const timeout = setTimeout(async () => {
+      setAccommodationLoading(true);
+      setAccommodationError(false);
+
+      try {
+        console.log("Searching accommodations:", query, city);
+        const results = await searchAccommodations(
+          query,
+          city,
+          controller.signal
+        );
+
+        if (!controller.signal.aborted) {
+          setAccommodationOptions(results);
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          setAccommodationError(true);
+          setAccommodationOptions([]);
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setAccommodationLoading(false);
+        }
+      }
+    }, 350);
+
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [accommodationInput, destination, accommodation]);
 
   const toggleInterest = (interest: Interest) => {
     setSelectedInterests((current) =>
@@ -85,14 +151,27 @@ export default function TravelForm({
     );
   };
 
+  const handleDestinationChange = (value: string) => {
+    setDestination(value);
+
+    setAccommodation(null);
+    setAccommodationInput("");
+    setAccommodationOptions([]);
+    setAccommodationError(false);
+    setAccommodationLoading(false);
+  };
+
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     onSubmit({
       destination: destination.trim(),
       duration_days: durationDays,
+      start_date: startDate || null,
       interests: selectedInterests,
       pace,
+      accommodation_latitude: accommodation?.latitude ?? null,
+      accommodation_longitude: accommodation?.longitude ?? null,
     });
   };
 
@@ -153,20 +232,102 @@ export default function TravelForm({
             placeholder="e.g. Chiang Mai, Thailand"
             value={destination}
             onChange={(event) =>
-              setDestination(event.target.value)
+              handleDestinationChange(event.target.value)
             }
             required
             fullWidth
             slotProps={{
               input: {
                 startAdornment: (
-                  <LocationOn
-                    color="action"
-                    sx={{ mr: 1 }}
-                  />
+                  <LocationOn color="action" sx={{ mr: 1 }} />
                 ),
               },
               htmlInput: { minLength: 2 },
+            }}
+          />
+
+          <Autocomplete
+            options={accommodationOptions}
+            value={accommodation}
+            inputValue={accommodationInput}
+            loading={accommodationLoading}
+            filterOptions={(options) => options}
+            getOptionLabel={(option) => option.name}
+            isOptionEqualToValue={(option, value) =>
+              option.place_id === value.place_id
+            }
+            onChange={(_, value) => {
+              setAccommodation(value);
+              setAccommodationInput(value?.name ?? "");
+              setAccommodationError(false);
+            }}
+            onInputChange={(_, value, reason) => {
+              setAccommodationInput(value);
+
+              if (reason === "input") {
+                setAccommodation(null);
+                setAccommodationOptions([]);
+                setAccommodationError(false);
+              }
+            }}
+            noOptionsText={
+              accommodationError
+                ? "Unable to search accommodations"
+                : accommodationInput.trim().length < 3
+                  ? "Type at least 3 characters"
+                  : "No accommodations found"
+            }
+
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                label="Where will you stay? (Optional)"
+                placeholder="Search for a hotel or accommodation"
+                error={accommodationError}
+                helperText={
+                  accommodationError
+                    ? "Could not load suggestions. Please try again."
+                    : "Leave empty to use the destination city center."
+                }
+                slotProps={{
+                  input: {
+                    ...params.slotProps.input,
+                    endAdornment: (
+                      <>
+                        {accommodationLoading && (
+                          <CircularProgress size={18} />
+                        )}
+                        {params.slotProps.input.endAdornment}
+                      </>
+                    ),
+                  },
+                  htmlInput: params.slotProps.htmlInput,
+                }}
+              />
+            )}
+
+            renderOption={(props, option) => {
+              const { key, ...otherProps } = props;
+
+              return (
+                <li key={key} {...otherProps}>
+                  <Box>
+                    <Typography
+                      variant="body2"
+                      sx={{ fontWeight: 600 }}
+                    >
+                      {option.name}
+                    </Typography>
+
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                    >
+                      {option.address}
+                    </Typography>
+                  </Box>
+                </li>
+              );
             }}
           />
 
@@ -182,10 +343,7 @@ export default function TravelForm({
             slotProps={{
               input: {
                 startAdornment: (
-                  <CalendarMonth
-                    color="action"
-                    sx={{ mr: 1 }}
-                  />
+                  <CalendarMonth color="action" sx={{ mr: 1 }} />
                 ),
               },
               htmlInput: {
@@ -194,6 +352,23 @@ export default function TravelForm({
                 step: 1,
               },
             }}
+          />
+
+          <TextField
+            label="When does your trip start?"
+            type="date"
+            value={startDate}
+            onChange={(event) => setStartDate(event.target.value)}
+            fullWidth
+            slotProps={{
+              inputLabel: { shrink: true },
+              input: {
+                startAdornment: (
+                  <CalendarMonth color="action" sx={{ mr: 1 }} />
+                ),
+              },
+            }}
+            helperText="Optional for now. Helps us check attraction opening hours."
           />
 
           <Box>
@@ -256,7 +431,6 @@ export default function TravelForm({
                       transition: "all 0.2s ease",
                       "&:hover": {
                         borderColor: "primary.main",
-                        transform: "translateY(-2px)",
                       },
                     }}
                   >
@@ -374,9 +548,7 @@ export default function TravelForm({
             size="large"
             fullWidth
             disabled={!isValid || loading}
-            endIcon={
-              loading ? undefined : <ArrowForward />
-            }
+            endIcon={loading ? undefined : <ArrowForward />}
             sx={{
               py: 1.8,
               borderRadius: 3,
@@ -395,10 +567,7 @@ export default function TravelForm({
                 spacing={1.5}
                 sx={{ alignItems: "center" }}
               >
-                <CircularProgress
-                  size={20}
-                  color="inherit"
-                />
+                <CircularProgress size={20} color="inherit" />
                 <span>Creating your trip...</span>
               </Stack>
             ) : (

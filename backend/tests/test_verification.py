@@ -46,12 +46,14 @@ async def test_filters_unverified_recommendations(monkeypatch):
 
             return json.dumps({"source_indices": []})
 
-        return json.dumps({
-            "verified": True,
-            "description": "Hiking trails in Doi Inthanon National Park.",
-            "activity_type": "hiking",
-            "duration_type": "unknown",
-        })
+        return json.dumps(
+            {
+                "verified": True,
+                "description": "Hiking trails in Doi Inthanon National Park.",
+                "activity_type": "hiking",
+                "duration_type": "unknown",
+            }
+        )
 
     monkeypatch.setattr(
         verification,
@@ -67,9 +69,7 @@ async def test_filters_unverified_recommendations(monkeypatch):
 
     assert len(result) == 1
     assert result[0].name == "Doi Inthanon National Park"
-    assert result[0].description == (
-        "Hiking trails in Doi Inthanon National Park."
-    )
+    assert result[0].description == ("Hiking trails in Doi Inthanon National Park.")
     assert result[0].activity_type == "hiking"
     assert result[0].duration_type == "unknown"
     assert result[0].source_indices == [1]
@@ -96,15 +96,17 @@ async def test_verification_removes_unsupported_activity(monkeypatch):
     mock_generate = AsyncMock(
         side_effect=[
             json.dumps({"source_indices": [1]}),
-            json.dumps({
-                "verified": True,
-                "description": (
-                    "A national park featuring waterfalls, "
-                    "hiking trails, and a reservoir."
-                ),
-                "activity_type": "hiking",
-                "duration_type": "unknown",
-            }),
+            json.dumps(
+                {
+                    "verified": True,
+                    "description": (
+                        "A national park featuring waterfalls, "
+                        "hiking trails, and a reservoir."
+                    ),
+                    "activity_type": "hiking",
+                    "duration_type": "unknown",
+                }
+            ),
         ]
     )
 
@@ -136,8 +138,7 @@ async def test_excludes_sources_about_unnamed_attractions(monkeypatch):
         category="wildlife",
         activity_type="elephant_sanctuary",
         description=(
-            "An elephant sanctuary offering river rafting "
-            "and elephant painting."
+            "An elephant sanctuary offering river rafting " "and elephant painting."
         ),
         relevance_reason="Matches wildlife interests.",
         source_indices=[1, 2],
@@ -163,15 +164,17 @@ async def test_excludes_sources_about_unnamed_attractions(monkeypatch):
     mock_generate = AsyncMock(
         side_effect=[
             json.dumps({"source_indices": [2]}),
-            json.dumps({
-                "verified": True,
-                "description": (
-                    "Elephant Nature Park is an elephant "
-                    "rescue and rehabilitation center."
-                ),
-                "activity_type": "elephant_sanctuary",
-                "duration_type": "unknown",
-            }),
+            json.dumps(
+                {
+                    "verified": True,
+                    "description": (
+                        "Elephant Nature Park is an elephant "
+                        "rescue and rehabilitation center."
+                    ),
+                    "activity_type": "elephant_sanctuary",
+                    "duration_type": "unknown",
+                }
+            ),
         ]
     )
 
@@ -214,16 +217,11 @@ async def test_rejects_generic_attraction_collection(monkeypatch):
     sources = [
         {
             "title": "Zoo Attractions Chiang Mai",
-            "content": (
-                "Explore different zoos and wildlife parks "
-                "in Chiang Mai."
-            ),
+            "content": ("Explore different zoos and wildlife parks " "in Chiang Mai."),
         }
     ]
 
-    mock_generate = AsyncMock(
-        return_value=json.dumps({"source_indices": []})
-    )
+    mock_generate = AsyncMock(return_value=json.dumps({"source_indices": []}))
 
     monkeypatch.setattr(
         verification,
@@ -263,12 +261,14 @@ async def test_verification_corrects_unsupported_duration(monkeypatch):
     mock_generate = AsyncMock(
         side_effect=[
             json.dumps({"source_indices": [1]}),
-            json.dumps({
-                "verified": True,
-                "description": "A waterfall accessible via a walking trail.",
-                "activity_type": "waterfall",
-                "duration_type": "unknown",
-            }),
+            json.dumps(
+                {
+                    "verified": True,
+                    "description": "A waterfall accessible via a walking trail.",
+                    "activity_type": "waterfall",
+                    "duration_type": "unknown",
+                }
+            ),
         ]
     )
 
@@ -310,12 +310,14 @@ async def test_rejects_invalid_verified_activity_type(monkeypatch):
     mock_generate = AsyncMock(
         side_effect=[
             json.dumps({"source_indices": [1]}),
-            json.dumps({
-                "verified": True,
-                "description": "An adventure park offering zipline activities.",
-                "activity_type": "Zipline Experience",
-                "duration_type": "unknown",
-            }),
+            json.dumps(
+                {
+                    "verified": True,
+                    "description": "An adventure park offering zipline activities.",
+                    "activity_type": "Zipline Experience",
+                    "duration_type": "unknown",
+                }
+            ),
         ]
     )
 
@@ -325,9 +327,10 @@ async def test_rejects_invalid_verified_activity_type(monkeypatch):
         mock_generate,
     )
 
-    with pytest.raises(ValueError, match="Invalid verified activity type"):
-        await verification.verify_recommendations(
-            [recommendation],
-            sources,
-            destination="Chiang Mai, Thailand",
-        )
+    result = await verification.verify_recommendations(
+        [recommendation],
+        sources,
+    )
+
+    assert result == []
+    assert mock_generate.await_count == 2

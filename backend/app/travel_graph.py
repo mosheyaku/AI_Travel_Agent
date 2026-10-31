@@ -1,4 +1,3 @@
-
 from typing import Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -12,7 +11,7 @@ from app.trip_generator import (
     find_driving_issues,
     find_planning_issues,
     find_total_driving_issues,
-    find_trip_origin,
+    resolve_trip_origin,
     generate_trip_candidate,
     repair_trip_plan,
     total_driving_excess_minutes,
@@ -24,7 +23,8 @@ from app.trip_planning import (
     build_attraction_queries,
     get_attraction_search_limit,
 )
-from app.itinerary_schedule import add_itinerary_schedule
+from app.itinerary_schedule import add_itinerary_schedule, add_itinerary_dates
+from app.opening_hours_validation import validate_itinerary_opening_hours
 
 
 class TravelState(TypedDict, total=False):
@@ -60,9 +60,7 @@ async def recommend_node(state: TravelState) -> dict:
     ]
 
     if not recommendations:
-        raise ValueError(
-            "No attractions with verified locations are available."
-        )
+        raise ValueError("No attractions with verified locations are available.")
 
     return {
         "recommendations": recommendations,
@@ -142,9 +140,7 @@ async def evaluate_node(state: TravelState) -> dict:
     return updates
 
 
-def decide_next(state: TravelState) -> Literal[
-    "finish", "retry", "repair"
-]:
+def decide_next(state: TravelState) -> Literal["finish", "retry", "repair"]:
     """Choose the next action based on validation results."""
     if state.get("trip") is not None:
         return "finish"
@@ -176,13 +172,24 @@ def append_feedback_node(state: TravelState) -> dict:
         )
     }
 
+
 async def schedule_node(state: TravelState) -> dict:
-    """Add estimated activity schedules to the final itinerary."""
+    """Add dates, accommodation travel times, and opening-hours validation."""
     trip = TravelItinerary.model_validate(state["trip"])
+    preferences = state["preferences"]
 
-    await add_itinerary_schedule(trip)
+    add_itinerary_dates(trip, preferences.start_date)
 
-    return {"trip": trip.model_dump()}
+    origin = await resolve_trip_origin(preferences)
+
+    await add_itinerary_schedule(
+        trip,
+        origin=origin,
+    )
+
+    await validate_itinerary_opening_hours(trip)
+
+    return {"trip": trip.model_dump(mode="json")}
 
 
 async def repair_node(state: TravelState) -> dict:
@@ -195,9 +202,7 @@ async def repair_node(state: TravelState) -> dict:
     candidate = state.get("candidate")
 
     if candidate is None:
-        raise ValueError(
-            "The model returned no valid itinerary after retries."
-        )
+        raise ValueError("The model returned no valid itinerary after retries.")
 
     repaired = await repair_trip_plan(
         candidate,
@@ -211,9 +216,7 @@ async def repair_node(state: TravelState) -> dict:
             + "; ".join(state.get("issues", []))
         )
 
-    origin = await find_trip_origin(
-        state["preferences"].destination
-    )
+    origin = await resolve_trip_origin(state["preferences"])
 
     if origin is not None:
         repaired = await add_total_driving_routes(

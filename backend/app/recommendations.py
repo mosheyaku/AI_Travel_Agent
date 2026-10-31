@@ -9,6 +9,7 @@ from app.search import search_attractions
 from app.deduplication import deduplicate_attractions
 from app.verification import verify_recommendations
 from app.attraction_locations import validate_attraction_locations
+from app.duration_enrichment import enrich_attraction_durations
 
 
 async def recommend_attractions(
@@ -25,15 +26,10 @@ async def recommend_attractions(
     if max_attractions < 1:
         raise ValueError("max_attractions must be positive.")
 
-    per_query_limit = (
-        max_attractions + len(queries) - 1
-    ) // len(queries)
+    per_query_limit = (max_attractions + len(queries) - 1) // len(queries)
 
     search_responses = await asyncio.gather(
-        *[
-            asyncio.to_thread(search_attractions, item)
-            for item in queries
-        ]
+        *[asyncio.to_thread(search_attractions, item) for item in queries]
     )
 
     sources = []
@@ -52,16 +48,16 @@ async def recommend_attractions(
 
             if url not in seen_urls:
                 seen_urls.add(url)
-                sources.append({
-                    "title": result["title"],
-                    "url": url,
-                    "content": result["content"],
-                })
+                sources.append(
+                    {
+                        "title": result["title"],
+                        "url": url,
+                        "content": result["content"],
+                    }
+                )
 
             source_index = next(
-                i
-                for i, source in enumerate(sources, start=1)
-                if source["url"] == url
+                i for i, source in enumerate(sources, start=1) if source["url"] == url
             )
 
             query_sources.append((source_index, result))
@@ -167,9 +163,7 @@ Requirements:
 
                 for item in raw_recommendations:
                     try:
-                        recommendation = AttractionRecommendation.model_validate(
-                            item
-                        )
+                        recommendation = AttractionRecommendation.model_validate(item)
                     except ValidationError:
                         continue
 
@@ -222,9 +216,7 @@ Return valid JSON using only these source indices.
 """
 
     if sources and not recommendations:
-        raise ValueError(
-            "The model returned no valid recommendations after retry."
-        )
+        raise ValueError("The model returned no valid recommendations after retry.")
 
     print(
         f"Total valid recommendations: {len(recommendations)}",
@@ -266,6 +258,15 @@ Return valid JSON using only these source indices.
             flush=True,
         )
 
+        if destination:
+            enriched = await enrich_attraction_durations(
+                [recommendation.model_dump() for recommendation in recommendations],
+                destination,
+            )
+        recommendations = [
+            AttractionRecommendation.model_validate(item) for item in enriched
+        ]
+
     parsed = AttractionRecommendations(
         recommendations=recommendations[:max_attractions]
     )
@@ -276,7 +277,6 @@ Return valid JSON using only these source indices.
         "query": query,
         "recommendations": parsed.model_dump()["recommendations"],
         "sources": [
-            {"title": source["title"], "url": source["url"]}
-            for source in sources
+            {"title": source["title"], "url": source["url"]} for source in sources
         ],
     }

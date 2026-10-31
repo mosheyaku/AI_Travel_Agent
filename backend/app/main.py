@@ -6,6 +6,12 @@ from app.recommendations import recommend_attractions
 from app.schemas import TravelPreferences
 from app.trip_planning import build_attraction_queries, get_attraction_search_limit
 from app.travel_graph import travel_graph
+import httpx
+
+from app.google_places import (
+    AccommodationSuggestion,
+    search_accommodations,
+)
 
 app = FastAPI(
     title=settings.app_name,
@@ -21,7 +27,9 @@ def health_check() -> dict[str, str]:
 
 
 @app.get("/attractions/search")
-def attraction_search(query: str = Query(min_length=3),) -> dict:
+def attraction_search(
+    query: str = Query(min_length=3),
+) -> dict:
     """Search the web for travel attractions."""
     return search_attractions(query)
 
@@ -37,6 +45,21 @@ async def attraction_recommendations(
         raise HTTPException(
             status_code=502,
             detail="The recommendation service returned an invalid response.",
+        ) from exc
+
+
+@app.get("/places/accommodations", response_model=list[AccommodationSuggestion])
+async def accommodation_suggestions(
+    query: str = Query(min_length=3),
+    destination: str = Query(min_length=2),
+) -> list[AccommodationSuggestion]:
+    """Find accommodation suggestions near the trip destination."""
+    try:
+        return await search_accommodations(query, destination)
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to retrieve accommodation suggestions.",
         ) from exc
 
 
@@ -56,16 +79,18 @@ async def trip_attractions(
     queries = build_attraction_queries(preferences)
 
     try:
-        return await recommend_attractions(queries,destination=preferences.destination,
-        max_attractions=get_attraction_search_limit(preferences),)
+        return await recommend_attractions(
+            queries,
+            destination=preferences.destination,
+            max_attractions=get_attraction_search_limit(preferences),
+        )
     except ValueError as exc:
         print(f"Trip attractions error: {exc!r}", flush=True)
-        
+
         raise HTTPException(
             status_code=502,
             detail="The recommendation service returned an invalid response.",
         ) from exc
-
 
 
 @app.post("/trips/generate")
@@ -74,9 +99,11 @@ async def generate_trip(
 ) -> dict:
     """Generate a trip using the LangGraph workflow."""
     try:
-        result = await travel_graph.ainvoke({
-            "preferences": preferences,
-        })
+        result = await travel_graph.ainvoke(
+            {
+                "preferences": preferences,
+            }
+        )
 
         return {
             "trip": result["trip"],

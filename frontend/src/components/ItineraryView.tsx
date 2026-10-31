@@ -1,4 +1,3 @@
-
 import {
   Accordion,
   AccordionDetails,
@@ -20,6 +19,10 @@ import {
   Explore,
   OpenInNew,
   Public,
+  CheckCircleOutlined,
+  ErrorOutlined,
+  HelpOutlined,
+  Hotel,
 } from "@mui/icons-material";
 
 import type {
@@ -39,6 +42,24 @@ const durationLabels: Record<string, string> = {
   half_day: "Half day",
   full_day: "Full day",
   unknown: "Duration unknown",
+};
+
+const openingHoursLabels = {
+  verified: "Within regular opening hours",
+  conflict: "Opening hours conflict",
+  unknown: "Opening hours not verified",
+} as const;
+
+const openingHoursColors = {
+  verified: "success",
+  conflict: "error",
+  unknown: "default",
+} as const;
+
+const openingHoursIcons = {
+  verified: <CheckCircleOutlined />,
+  conflict: <ErrorOutlined />,
+  unknown: <HelpOutlined />,
 };
 
 function getSourceDomain(url: string): string {
@@ -72,8 +93,8 @@ function ActivitySources({
 
   return (
     <Stack
-    direction="row"
-    sx={{ mt: 1.5, flexWrap: "wrap", gap: 1 }}
+      direction="row"
+      sx={{ mt: 1.5, flexWrap: "wrap", gap: 1 }}
     >
       {relevantSources.map(({ index, source }) => (
         <Chip
@@ -174,6 +195,23 @@ export default function ItineraryView({
                 >
                   Your Adventures
                 </Typography>
+
+                {day.date && (
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{ mt: 0.5 }}
+                  >
+                    {new Date(`${day.date}T12:00:00`).toLocaleDateString(
+                      "en-US",
+                      {
+                        weekday: "long",
+                        month: "long",
+                        day: "numeric",
+                      }
+                    )}
+                  </Typography>
+                )}
               </Box>
 
               <Explore color="primary" sx={{ fontSize: 32 }} />
@@ -210,6 +248,47 @@ export default function ItineraryView({
             )}
 
             <Stack spacing={3}>
+              {day.departure_time && (
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 2,
+                    px: 2,
+                    py: 2,
+                    borderRadius: 3,
+                    bgcolor: "action.hover",
+                  }}
+                >
+                  <Box
+                    sx={{
+                      width: 38,
+                      height: 38,
+                      flexShrink: 0,
+                      borderRadius: 2,
+                      bgcolor: "background.paper",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Hotel color="primary" />
+                  </Box>
+
+                  <Box>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                      {day.departure_time} — Leave accommodation
+                    </Typography>
+
+                    {day.travel_minutes_to_first != null && (
+                      <Typography variant="caption" color="text.secondary">
+                        {day.travel_minutes_to_first} min drive to first stop
+                      </Typography>
+                    )}
+                  </Box>
+                </Box>
+              )}
+
               {day.activities.map((activity, index) => (
                 <Box key={`${day.day}-${index}`}>
                   {index > 0 && <Divider sx={{ mb: 3 }} />}
@@ -256,6 +335,34 @@ export default function ItineraryView({
                               gap: 1,
                             }}
                           >
+
+                            <Stack
+                              direction="row"
+                              sx={{
+                                mb: 1.5,
+                                alignItems: "center",
+                                flexWrap: "wrap",
+                                gap: 1,
+                              }}
+                            >
+                              <Chip
+                                icon={openingHoursIcons[activity.opening_hours_status ?? "unknown"]}
+                                label={
+                                  openingHoursLabels[
+                                  activity.opening_hours_status ?? "unknown"
+                                  ]
+                                }
+                                size="small"
+                                color={
+                                  openingHoursColors[
+                                  activity.opening_hours_status ?? "unknown"
+                                  ]
+                                }
+                                variant="outlined"
+                                sx={{ fontWeight: 600 }}
+                              />
+                            </Stack>
+
                             <Chip
                               icon={<AccessTime />}
                               label={`${activity.start_time} – ${activity.end_time}`}
@@ -275,7 +382,7 @@ export default function ItineraryView({
 
                       {index > 0 &&
                         activity.travel_minutes_from_previous !=
-                          null && (
+                        null && (
                           <Stack
                             direction="row"
                             spacing={1}
@@ -333,7 +440,7 @@ export default function ItineraryView({
                           icon={<AccessTime />}
                           label={
                             durationLabels[
-                              activity.duration_type
+                            activity.duration_type
                             ] ?? "Duration unknown"
                           }
                           size="small"
@@ -349,6 +456,54 @@ export default function ItineraryView({
                   </Stack>
                 </Box>
               ))}
+
+              {day.return_time && (
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 2,
+                    px: 2,
+                    py: 2,
+                    borderRadius: 3,
+                    bgcolor: "action.hover",
+                  }}
+                >
+                  <Box
+                    sx={{
+                      width: 38,
+                      height: 38,
+                      flexShrink: 0,
+                      borderRadius: 2,
+                      bgcolor: "background.paper",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Hotel color="primary" />
+                  </Box>
+
+                  <Box>
+                    <Typography
+                      variant="subtitle2"
+                      sx={{ fontWeight: 700 }}
+                    >
+                      {day.return_time} — Return to accommodation
+                    </Typography>
+
+                    {day.travel_minutes_to_accommodation != null && (
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                      >
+                        {day.travel_minutes_to_accommodation} min drive
+                        from last stop
+                      </Typography>
+                    )}
+                  </Box>
+                </Box>
+              )}
             </Stack>
           </Paper>
         ))}

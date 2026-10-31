@@ -1,4 +1,3 @@
-
 from unittest.mock import AsyncMock
 
 import pytest
@@ -19,41 +18,49 @@ def preferences():
 
 @pytest.fixture
 def recommendations():
-    return [{
-        "name": "Test Park",
-        "activity_type": "hiking",
-        "description": "A nature park.",
-        "source_indices": [1],
-        "location_status": LocationStatus.VERIFIED,
-        "latitude": 18.7,
-        "longitude": 98.9,
-        "google_place_id": "test-place",
-    }]
+    return [
+        {
+            "name": "Test Park",
+            "activity_type": "hiking",
+            "description": "A nature park.",
+            "source_indices": [1],
+            "location_status": LocationStatus.VERIFIED,
+            "latitude": 18.7,
+            "longitude": 98.9,
+            "google_place_id": "test-place",
+        }
+    ]
 
 
 def make_trip():
-    return TravelItinerary.model_validate({
-        "destination": "Chiang Mai, Thailand",
-        "days": [{
-            "day": 1,
-            "activities": [{
-                "name": "Test Park",
-                "activity_type": "hiking",
-                "description": "A nature park.",
-                "source_indices": [1],
-            }],
-        }],
-    })
+    return TravelItinerary.model_validate(
+        {
+            "destination": "Chiang Mai, Thailand",
+            "days": [
+                {
+                    "day": 1,
+                    "activities": [
+                        {
+                            "name": "Test Park",
+                            "activity_type": "hiking",
+                            "description": "A nature park.",
+                            "source_indices": [1],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
 
 
 @pytest.fixture
 def mock_recommendations(monkeypatch, recommendations):
-    mock = AsyncMock(return_value={
-        "recommendations": recommendations,
-        "sources": [
-            {"title": "Test Source", "url": "https://example.com"}
-        ],
-    })
+    mock = AsyncMock(
+        return_value={
+            "recommendations": recommendations,
+            "sources": [{"title": "Test Source", "url": "https://example.com"}],
+        }
+    )
 
     monkeypatch.setattr(
         travel_graph,
@@ -84,9 +91,11 @@ async def test_graph_generates_valid_trip(
         mock_evaluate,
     )
 
-    result = await travel_graph.travel_graph.ainvoke({
-        "preferences": preferences,
-    })
+    result = await travel_graph.travel_graph.ainvoke(
+        {
+            "preferences": preferences,
+        }
+    )
 
     assert result["trip"]["destination"] == "Chiang Mai, Thailand"
     assert len(result["sources"]) == 1
@@ -101,10 +110,12 @@ async def test_graph_retries_invalid_candidate(
     preferences,
     mock_recommendations,
 ):
-    mock_generate = AsyncMock(side_effect=[
-        ValueError("Invalid JSON"),
-        make_trip(),
-    ])
+    mock_generate = AsyncMock(
+        side_effect=[
+            ValueError("Invalid JSON"),
+            make_trip(),
+        ]
+    )
     mock_evaluate = AsyncMock(return_value=[])
 
     monkeypatch.setattr(
@@ -118,9 +129,11 @@ async def test_graph_retries_invalid_candidate(
         mock_evaluate,
     )
 
-    result = await travel_graph.travel_graph.ainvoke({
-        "preferences": preferences,
-    })
+    result = await travel_graph.travel_graph.ainvoke(
+        {
+            "preferences": preferences,
+        }
+    )
 
     assert result["attempts"] == 2
     assert mock_generate.await_count == 2
@@ -155,13 +168,15 @@ async def test_graph_repairs_invalid_trip(
     )
     monkeypatch.setattr(
         travel_graph,
-        "find_trip_origin",
+        "resolve_trip_origin",
         AsyncMock(return_value=None),
     )
 
-    result = await travel_graph.travel_graph.ainvoke({
-        "preferences": preferences,
-    })
+    result = await travel_graph.travel_graph.ainvoke(
+        {
+            "preferences": preferences,
+        }
+    )
 
     assert result["attempts"] == 2
     mock_repair.assert_awaited_once()
@@ -179,19 +194,23 @@ async def test_graph_rejects_unverified_attractions(
     monkeypatch.setattr(
         travel_graph,
         "recommend_attractions",
-        AsyncMock(return_value={
-            "recommendations": recommendations,
-            "sources": [],
-        }),
+        AsyncMock(
+            return_value={
+                "recommendations": recommendations,
+                "sources": [],
+            }
+        ),
     )
 
     with pytest.raises(
         ValueError,
         match="No attractions with verified locations",
     ):
-        await travel_graph.travel_graph.ainvoke({
-            "preferences": preferences,
-        })
+        await travel_graph.travel_graph.ainvoke(
+            {
+                "preferences": preferences,
+            }
+        )
 
 
 @pytest.mark.anyio
@@ -206,13 +225,9 @@ async def test_graph_selects_best_driving_fallback(
     second_trip = make_trip()
     second_trip.days[0].total_driving_duration_minutes = 200
 
-    mock_generate = AsyncMock(
-        side_effect=[first_trip, second_trip]
-    )
+    mock_generate = AsyncMock(side_effect=[first_trip, second_trip])
 
-    mock_evaluate = AsyncMock(
-        return_value=["Day 1: excessive total driving time"]
-    )
+    mock_evaluate = AsyncMock(return_value=["Day 1: excessive total driving time"])
 
     monkeypatch.setattr(
         travel_graph,
@@ -240,9 +255,11 @@ async def test_graph_selects_best_driving_fallback(
         lambda trip: ["Excessive total driving"],
     )
 
-    result = await travel_graph.travel_graph.ainvoke({
-        "preferences": preferences,
-    })
+    result = await travel_graph.travel_graph.ainvoke(
+        {
+            "preferences": preferences,
+        }
+    )
 
     assert result["attempts"] == 2
     assert mock_generate.await_count == 2
