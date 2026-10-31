@@ -13,9 +13,12 @@ export type Pace = "relaxed" | "balanced" | "active";
 export interface TravelPreferences {
   destination: string;
   duration_days: number;
+  start_date?: string | null;
   interests: Interest[];
   pace: Pace;
   budget?: number | null;
+  accommodation_latitude?: number | null;
+  accommodation_longitude?: number | null;
 }
 
 export interface ItineraryActivity {
@@ -33,10 +36,16 @@ export interface ItineraryActivity {
   end_time: string | null;
   estimated_duration_minutes: number | null;
   travel_minutes_from_previous: number | null;
+  opening_hours_status: "verified" | "conflict" | "unknown";
 }
 
 export interface ItineraryDay {
   day: number;
+  date: string | null;
+  departure_time: string | null;
+  return_time: string | null;
+  travel_minutes_to_first: number | null;
+  travel_minutes_to_accommodation: number | null;
   activities: ItineraryActivity[];
   max_distance_km: number | null;
   driving_distance_km: number | null;
