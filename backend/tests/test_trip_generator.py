@@ -1,4 +1,3 @@
-
 import json
 
 import pytest
@@ -7,6 +6,7 @@ from app import trip_generator
 from app.location_validation import LocationStatus
 from app.schemas import TravelItinerary, TravelPreferences
 from app.trip_generator import find_activity_load_issues
+from app.itinerary_routes import MAX_TOTAL_DAILY_DRIVING_MINUTES
 
 
 def verified_attraction(name, source_index, activity_type="other", **extra):
@@ -60,33 +60,35 @@ async def test_generate_trip_plan(monkeypatch):
     ]
 
     async def fake_generate_text(prompt: str) -> str:
-        return json.dumps({
-            "destination": "Chiang Mai, Thailand",
-            "days": [
-                {
-                    "day": 1,
-                    "activities": [
-                        {
-                            "name": "Skyline Adventure",
-                            "activity_type": "zipline",
-                            "description": "Ziplining through the jungle.",
-                            "source_indices": [1],
-                        }
-                    ],
-                },
-                {
-                    "day": 2,
-                    "activities": [
-                        {
-                            "name": "Doi Inthanon National Park",
-                            "activity_type": "hiking",
-                            "description": "Hiking and scenic viewpoints.",
-                            "source_indices": [2],
-                        }
-                    ],
-                },
-            ],
-        })
+        return json.dumps(
+            {
+                "destination": "Chiang Mai, Thailand",
+                "days": [
+                    {
+                        "day": 1,
+                        "activities": [
+                            {
+                                "name": "Skyline Adventure",
+                                "activity_type": "zipline",
+                                "description": "Ziplining through the jungle.",
+                                "source_indices": [1],
+                            }
+                        ],
+                    },
+                    {
+                        "day": 2,
+                        "activities": [
+                            {
+                                "name": "Doi Inthanon National Park",
+                                "activity_type": "hiking",
+                                "description": "Hiking and scenic viewpoints.",
+                                "source_indices": [2],
+                            }
+                        ],
+                    },
+                ],
+            }
+        )
 
     monkeypatch.setattr(
         trip_generator,
@@ -109,15 +111,17 @@ async def test_generate_trip_plan(monkeypatch):
 @pytest.mark.anyio
 async def test_rejects_incorrect_number_of_days(monkeypatch):
     async def fake_generate_text(prompt: str) -> str:
-        return json.dumps({
-            "destination": "Chiang Mai, Thailand",
-            "days": [
-                {
-                    "day": 1,
-                    "activities": [],
-                }
-            ],
-        })
+        return json.dumps(
+            {
+                "destination": "Chiang Mai, Thailand",
+                "days": [
+                    {
+                        "day": 1,
+                        "activities": [],
+                    }
+                ],
+            }
+        )
 
     monkeypatch.setattr(
         trip_generator,
@@ -148,22 +152,24 @@ async def test_rejects_incorrect_number_of_days(monkeypatch):
 @pytest.mark.anyio
 async def test_rejects_unknown_attraction(monkeypatch):
     async def fake_generate_text(prompt: str) -> str:
-        return json.dumps({
-            "destination": "Chiang Mai, Thailand",
-            "days": [
-                {
-                    "day": 1,
-                    "activities": [
-                        {
-                            "name": "Invented Adventure Park",
-                            "activity_type": "other",
-                            "description": "An invented attraction.",
-                            "source_indices": [1],
-                        }
-                    ],
-                }
-            ],
-        })
+        return json.dumps(
+            {
+                "destination": "Chiang Mai, Thailand",
+                "days": [
+                    {
+                        "day": 1,
+                        "activities": [
+                            {
+                                "name": "Invented Adventure Park",
+                                "activity_type": "other",
+                                "description": "An invented attraction.",
+                                "source_indices": [1],
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
 
     monkeypatch.setattr(
         trip_generator,
@@ -198,33 +204,35 @@ async def test_rejects_unknown_attraction(monkeypatch):
 @pytest.mark.anyio
 async def test_rejects_duplicate_attraction(monkeypatch):
     async def fake_generate_text(prompt: str) -> str:
-        return json.dumps({
-            "destination": "Chiang Mai, Thailand",
-            "days": [
-                {
-                    "day": 1,
-                    "activities": [
-                        {
-                            "name": "Skyline Adventure",
-                            "activity_type": "zipline",
-                            "description": "Ziplining in the jungle.",
-                            "source_indices": [1],
-                        }
-                    ],
-                },
-                {
-                    "day": 2,
-                    "activities": [
-                        {
-                            "name": "Skyline Adventure",
-                            "activity_type": "zipline",
-                            "description": "Another visit to the same attraction.",
-                            "source_indices": [1],
-                        }
-                    ],
-                },
-            ],
-        })
+        return json.dumps(
+            {
+                "destination": "Chiang Mai, Thailand",
+                "days": [
+                    {
+                        "day": 1,
+                        "activities": [
+                            {
+                                "name": "Skyline Adventure",
+                                "activity_type": "zipline",
+                                "description": "Ziplining in the jungle.",
+                                "source_indices": [1],
+                            }
+                        ],
+                    },
+                    {
+                        "day": 2,
+                        "activities": [
+                            {
+                                "name": "Skyline Adventure",
+                                "activity_type": "zipline",
+                                "description": "Another visit to the same attraction.",
+                                "source_indices": [1],
+                            }
+                        ],
+                    },
+                ],
+            }
+        )
 
     monkeypatch.setattr(
         trip_generator,
@@ -259,22 +267,24 @@ async def test_rejects_duplicate_attraction(monkeypatch):
 @pytest.mark.anyio
 async def test_rejects_modified_source_indices(monkeypatch):
     async def fake_generate_text(prompt: str) -> str:
-        return json.dumps({
-            "destination": "Chiang Mai, Thailand",
-            "days": [
-                {
-                    "day": 1,
-                    "activities": [
-                        {
-                            "name": "Skyline Adventure",
-                            "activity_type": "zipline",
-                            "description": "Ziplining in Chiang Mai.",
-                            "source_indices": [99],
-                        }
-                    ],
-                }
-            ],
-        })
+        return json.dumps(
+            {
+                "destination": "Chiang Mai, Thailand",
+                "days": [
+                    {
+                        "day": 1,
+                        "activities": [
+                            {
+                                "name": "Skyline Adventure",
+                                "activity_type": "zipline",
+                                "description": "Ziplining in Chiang Mai.",
+                                "source_indices": [99],
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
 
     monkeypatch.setattr(
         trip_generator,
@@ -309,25 +319,27 @@ async def test_rejects_modified_source_indices(monkeypatch):
 @pytest.mark.anyio
 async def test_preserves_verified_attraction_location(monkeypatch):
     async def fake_generate_text(prompt: str) -> str:
-        return json.dumps({
-            "destination": "Chiang Mai, Thailand",
-            "days": [
-                {
-                    "day": 1,
-                    "activities": [
-                        {
-                            "name": "Elephant Nature Park",
-                            "activity_type": "elephant_sanctuary",
-                            "description": "Visit an elephant sanctuary.",
-                            "source_indices": [1],
-                            "google_place_id": "fake-place-id",
-                            "latitude": 0.0,
-                            "longitude": 0.0,
-                        }
-                    ],
-                }
-            ],
-        })
+        return json.dumps(
+            {
+                "destination": "Chiang Mai, Thailand",
+                "days": [
+                    {
+                        "day": 1,
+                        "activities": [
+                            {
+                                "name": "Elephant Nature Park",
+                                "activity_type": "elephant_sanctuary",
+                                "description": "Visit an elephant sanctuary.",
+                                "source_indices": [1],
+                                "google_place_id": "fake-place-id",
+                                "latitude": 0.0,
+                                "longitude": 0.0,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
 
     monkeypatch.setattr(
         trip_generator,
@@ -377,28 +389,30 @@ async def test_calculates_itinerary_day_distance(
     mock_driving_routes,
 ):
     async def fake_generate_text(prompt: str) -> str:
-        return json.dumps({
-            "destination": "Chiang Mai, Thailand",
-            "days": [
-                {
-                    "day": 1,
-                    "activities": [
-                        {
-                            "name": "Attraction A",
-                            "activity_type": "other",
-                            "description": "First attraction.",
-                            "source_indices": [1],
-                        },
-                        {
-                            "name": "Attraction B",
-                            "activity_type": "other",
-                            "description": "Second attraction.",
-                            "source_indices": [2],
-                        },
-                    ],
-                }
-            ],
-        })
+        return json.dumps(
+            {
+                "destination": "Chiang Mai, Thailand",
+                "days": [
+                    {
+                        "day": 1,
+                        "activities": [
+                            {
+                                "name": "Attraction A",
+                                "activity_type": "other",
+                                "description": "First attraction.",
+                                "source_indices": [1],
+                            },
+                            {
+                                "name": "Attraction B",
+                                "activity_type": "other",
+                                "description": "Second attraction.",
+                                "source_indices": [2],
+                            },
+                        ],
+                    }
+                ],
+            }
+        )
 
     monkeypatch.setattr(
         trip_generator,
@@ -446,28 +460,30 @@ async def test_includes_attraction_distances_in_prompt(
     async def fake_generate_text(prompt: str) -> str:
         captured_prompts.append(prompt)
 
-        return json.dumps({
-            "destination": "Chiang Mai, Thailand",
-            "days": [
-                {
-                    "day": 1,
-                    "activities": [
-                        {
-                            "name": "Attraction A",
-                            "activity_type": "other",
-                            "description": "First attraction.",
-                            "source_indices": [1],
-                        },
-                        {
-                            "name": "Attraction B",
-                            "activity_type": "other",
-                            "description": "Second attraction.",
-                            "source_indices": [2],
-                        },
-                    ],
-                }
-            ],
-        })
+        return json.dumps(
+            {
+                "destination": "Chiang Mai, Thailand",
+                "days": [
+                    {
+                        "day": 1,
+                        "activities": [
+                            {
+                                "name": "Attraction A",
+                                "activity_type": "other",
+                                "description": "First attraction.",
+                                "source_indices": [1],
+                            },
+                            {
+                                "name": "Attraction B",
+                                "activity_type": "other",
+                                "description": "Second attraction.",
+                                "source_indices": [2],
+                            },
+                        ],
+                    }
+                ],
+            }
+        )
 
     monkeypatch.setattr(
         trip_generator,
@@ -512,28 +528,32 @@ async def test_includes_attraction_distances_in_prompt(
 
 
 def test_rejects_full_day_activity_with_another_activity():
-    trip = TravelItinerary.model_validate({
-        "destination": "Chiang Mai",
-        "days": [{
-            "day": 1,
-            "activities": [
+    trip = TravelItinerary.model_validate(
+        {
+            "destination": "Chiang Mai",
+            "days": [
                 {
-                    "name": "Full-day tour",
-                    "activity_type": "guided_tour",
-                    "description": "A full-day tour.",
-                    "source_indices": [1],
-                    "duration_type": "full_day",
-                },
-                {
-                    "name": "Waterfall",
-                    "activity_type": "waterfall",
-                    "description": "A waterfall visit.",
-                    "source_indices": [2],
-                    "duration_type": "short",
-                },
+                    "day": 1,
+                    "activities": [
+                        {
+                            "name": "Full-day tour",
+                            "activity_type": "guided_tour",
+                            "description": "A full-day tour.",
+                            "source_indices": [1],
+                            "duration_type": "full_day",
+                        },
+                        {
+                            "name": "Waterfall",
+                            "activity_type": "waterfall",
+                            "description": "A waterfall visit.",
+                            "source_indices": [2],
+                            "duration_type": "short",
+                        },
+                    ],
+                }
             ],
-        }],
-    })
+        }
+    )
 
     issues = find_activity_load_issues(trip)
 
@@ -573,22 +593,24 @@ async def test_excludes_unverified_attractions(monkeypatch):
         assert "Verified Park" in prompt
         assert "Unknown Park" not in prompt
 
-        return json.dumps({
-            "destination": "Chiang Mai, Thailand",
-            "days": [
-                {
-                    "day": 1,
-                    "activities": [
-                        {
-                            "name": "Verified Park",
-                            "activity_type": "other",
-                            "description": "Adventure park",
-                            "source_indices": [1],
-                        }
-                    ],
-                }
-            ],
-        })
+        return json.dumps(
+            {
+                "destination": "Chiang Mai, Thailand",
+                "days": [
+                    {
+                        "day": 1,
+                        "activities": [
+                            {
+                                "name": "Verified Park",
+                                "activity_type": "other",
+                                "description": "Adventure park",
+                                "source_indices": [1],
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
 
     monkeypatch.setattr(
         trip_generator,
@@ -603,10 +625,7 @@ async def test_excludes_unverified_attractions(monkeypatch):
 
     assert len(result.days[0].activities) == 1
     assert result.days[0].activities[0].name == "Verified Park"
-    assert (
-        result.days[0].activities[0].location_status
-        == LocationStatus.VERIFIED
-    )
+    assert result.days[0].activities[0].location_status == LocationStatus.VERIFIED
 
 
 @pytest.mark.anyio
@@ -649,35 +668,39 @@ async def test_rejects_trip_without_verified_attractions(monkeypatch):
 
 
 def test_rejects_three_half_day_activities():
-    trip = TravelItinerary.model_validate({
-        "destination": "Chiang Mai",
-        "days": [{
-            "day": 1,
-            "activities": [
+    trip = TravelItinerary.model_validate(
+        {
+            "destination": "Chiang Mai",
+            "days": [
                 {
-                    "name": "Zipline",
-                    "activity_type": "zipline",
-                    "description": "Jungle ziplining.",
-                    "source_indices": [1],
-                    "duration_type": "half_day",
-                },
-                {
-                    "name": "Elephant Sanctuary",
-                    "activity_type": "elephant_sanctuary",
-                    "description": "Elephant sanctuary visit.",
-                    "source_indices": [2],
-                    "duration_type": "half_day",
-                },
-                {
-                    "name": "Waterfall Tour",
-                    "activity_type": "waterfall",
-                    "description": "Guided waterfall tour.",
-                    "source_indices": [3],
-                    "duration_type": "half_day",
-                },
+                    "day": 1,
+                    "activities": [
+                        {
+                            "name": "Zipline",
+                            "activity_type": "zipline",
+                            "description": "Jungle ziplining.",
+                            "source_indices": [1],
+                            "duration_type": "half_day",
+                        },
+                        {
+                            "name": "Elephant Sanctuary",
+                            "activity_type": "elephant_sanctuary",
+                            "description": "Elephant sanctuary visit.",
+                            "source_indices": [2],
+                            "duration_type": "half_day",
+                        },
+                        {
+                            "name": "Waterfall Tour",
+                            "activity_type": "waterfall",
+                            "description": "Guided waterfall tour.",
+                            "source_indices": [3],
+                            "duration_type": "half_day",
+                        },
+                    ],
+                }
             ],
-        }],
-    })
+        }
+    )
 
     issues = find_activity_load_issues(trip)
 
@@ -686,28 +709,32 @@ def test_rejects_three_half_day_activities():
 
 
 def test_allows_two_half_day_activities():
-    trip = TravelItinerary.model_validate({
-        "destination": "Chiang Mai",
-        "days": [{
-            "day": 1,
-            "activities": [
+    trip = TravelItinerary.model_validate(
+        {
+            "destination": "Chiang Mai",
+            "days": [
                 {
-                    "name": "Zipline",
-                    "activity_type": "zipline",
-                    "description": "Jungle ziplining.",
-                    "source_indices": [1],
-                    "duration_type": "half_day",
-                },
-                {
-                    "name": "Elephant Sanctuary",
-                    "activity_type": "elephant_sanctuary",
-                    "description": "Elephant sanctuary visit.",
-                    "source_indices": [2],
-                    "duration_type": "half_day",
-                },
+                    "day": 1,
+                    "activities": [
+                        {
+                            "name": "Zipline",
+                            "activity_type": "zipline",
+                            "description": "Jungle ziplining.",
+                            "source_indices": [1],
+                            "duration_type": "half_day",
+                        },
+                        {
+                            "name": "Elephant Sanctuary",
+                            "activity_type": "elephant_sanctuary",
+                            "description": "Elephant sanctuary visit.",
+                            "source_indices": [2],
+                            "duration_type": "half_day",
+                        },
+                    ],
+                }
             ],
-        }],
-    })
+        }
+    )
 
     issues = find_activity_load_issues(trip)
 
@@ -752,26 +779,26 @@ async def test_retries_when_day_has_too_many_half_day_activities(
         prompts.append(prompt)
         plan = generated_plans[len(prompts) - 1]
 
-        return json.dumps({
-            "destination": "Chiang Mai, Thailand",
-            "days": [
-                {
-                    "day": day_number,
-                    "activities": [
-                        {
-                            "name": name,
-                            "activity_type": "other",
-                            "description": "Test activity.",
-                            "source_indices": [
-                                int(name.split()[-1])
-                            ],
-                        }
-                        for name in names
-                    ],
-                }
-                for day_number, names in enumerate(plan, start=1)
-            ],
-        })
+        return json.dumps(
+            {
+                "destination": "Chiang Mai, Thailand",
+                "days": [
+                    {
+                        "day": day_number,
+                        "activities": [
+                            {
+                                "name": name,
+                                "activity_type": "other",
+                                "description": "Test activity.",
+                                "source_indices": [int(name.split()[-1])],
+                            }
+                            for name in names
+                        ],
+                    }
+                    for day_number, names in enumerate(plan, start=1)
+                ],
+            }
+        )
 
     monkeypatch.setattr(
         trip_generator,
@@ -802,18 +829,24 @@ async def test_adds_total_driving_after_valid_trip(monkeypatch):
     ]
 
     async def fake_generate_text(prompt):
-        return json.dumps({
-            "destination": "Chiang Mai, Thailand",
-            "days": [{
-                "day": 1,
-                "activities": [{
-                    "name": "Test Park",
-                    "activity_type": "other",
-                    "description": "A nature park.",
-                    "source_indices": [1],
-                }],
-            }],
-        })
+        return json.dumps(
+            {
+                "destination": "Chiang Mai, Thailand",
+                "days": [
+                    {
+                        "day": 1,
+                        "activities": [
+                            {
+                                "name": "Test Park",
+                                "activity_type": "other",
+                                "description": "A nature park.",
+                                "source_indices": [1],
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
 
     async def fake_find_trip_origin(destination):
         return (18.7883, 98.9853)
@@ -882,26 +915,26 @@ async def test_prefers_trip_with_less_daily_driving_excess(monkeypatch):
         plan = plans[generated]
         generated += 1
 
-        return json.dumps({
-            "destination": "Chiang Mai, Thailand",
-            "days": [
-                {
-                    "day": index,
-                    "activities": [
-                        {
-                            "name": name,
-                            "activity_type": "other",
-                            "description": "Test attraction.",
-                            "source_indices": [
-                                1 if name == "Attraction A" else 2
-                            ],
-                        }
-                        for name in names
-                    ],
-                }
-                for index, names in enumerate(plan, start=1)
-            ],
-        })
+        return json.dumps(
+            {
+                "destination": "Chiang Mai, Thailand",
+                "days": [
+                    {
+                        "day": index,
+                        "activities": [
+                            {
+                                "name": name,
+                                "activity_type": "other",
+                                "description": "Test attraction.",
+                                "source_indices": [1 if name == "Attraction A" else 2],
+                            }
+                            for name in names
+                        ],
+                    }
+                    for index, names in enumerate(plan, start=1)
+                ],
+            }
+        )
 
     async def fake_find_trip_origin(destination):
         return (18.7883, 98.9853)
@@ -946,7 +979,7 @@ async def test_prefers_trip_with_less_daily_driving_excess(monkeypatch):
     assert trip.days[0].activities[0].name == "Attraction B"
     assert trip.days[0].total_driving_duration_minutes == 190
     assert trip.days[1].total_driving_duration_minutes == 170
-    
+
 
 @pytest.mark.parametrize(
     ("durations", "should_reject"),
@@ -963,22 +996,26 @@ def test_activity_load_with_unknown_durations(
     durations,
     should_reject,
 ):
-    trip = TravelItinerary.model_validate({
-        "destination": "Chiang Mai",
-        "days": [{
-            "day": 1,
-            "activities": [
+    trip = TravelItinerary.model_validate(
+        {
+            "destination": "Chiang Mai",
+            "days": [
                 {
-                    "name": f"Attraction {index}",
-                    "activity_type": "other",
-                    "description": "Test attraction.",
-                    "source_indices": [index],
-                    "duration_type": duration,
+                    "day": 1,
+                    "activities": [
+                        {
+                            "name": f"Attraction {index}",
+                            "activity_type": "other",
+                            "description": "Test attraction.",
+                            "source_indices": [index],
+                            "duration_type": duration,
+                        }
+                        for index, duration in enumerate(durations, start=1)
+                    ],
                 }
-                for index, duration in enumerate(durations, start=1)
             ],
-        }],
-    })
+        }
+    )
 
     issues = find_activity_load_issues(trip)
 
@@ -1001,22 +1038,26 @@ def test_activity_count_respects_travel_pace(
     activity_count,
     should_reject,
 ):
-    trip = TravelItinerary.model_validate({
-        "destination": "Chiang Mai",
-        "days": [{
-            "day": 1,
-            "activities": [
+    trip = TravelItinerary.model_validate(
+        {
+            "destination": "Chiang Mai",
+            "days": [
                 {
-                    "name": f"Attraction {index}",
-                    "activity_type": "other",
-                    "description": "A short activity.",
-                    "source_indices": [index],
-                    "duration_type": "short",
+                    "day": 1,
+                    "activities": [
+                        {
+                            "name": f"Attraction {index}",
+                            "activity_type": "other",
+                            "description": "A short activity.",
+                            "source_indices": [index],
+                            "duration_type": "short",
+                        }
+                        for index in range(1, activity_count + 1)
+                    ],
                 }
-                for index in range(1, activity_count + 1)
             ],
-        }],
-    })
+        }
+    )
 
     issues = find_activity_load_issues(trip, pace)
 
@@ -1055,26 +1096,26 @@ async def test_retries_when_trip_exceeds_requested_pace(
         prompts.append(prompt)
         plan = generated_plans[len(prompts) - 1]
 
-        return json.dumps({
-            "destination": "Chiang Mai, Thailand",
-            "days": [
-                {
-                    "day": day_number,
-                    "activities": [
-                        {
-                            "name": name,
-                            "activity_type": "other",
-                            "description": "Test activity.",
-                            "source_indices": [
-                                int(name.split()[-1])
-                            ],
-                        }
-                        for name in names
-                    ],
-                }
-                for day_number, names in enumerate(plan, start=1)
-            ],
-        })
+        return json.dumps(
+            {
+                "destination": "Chiang Mai, Thailand",
+                "days": [
+                    {
+                        "day": day_number,
+                        "activities": [
+                            {
+                                "name": name,
+                                "activity_type": "other",
+                                "description": "Test activity.",
+                                "source_indices": [int(name.split()[-1])],
+                            }
+                            for name in names
+                        ],
+                    }
+                    for day_number, names in enumerate(plan, start=1)
+                ],
+            }
+        )
 
     monkeypatch.setattr(
         trip_generator,
@@ -1090,3 +1131,468 @@ async def test_retries_when_trip_exceeds_requested_pace(
     assert len(prompts) == 2
     assert "exceed the relaxed pace limit" in prompts[1]
     assert [len(day.activities) for day in trip.days] == [2, 1]
+
+
+def test_preserves_source_supported_duration():
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=1,
+        interests=["adventure"],
+    )
+
+    recommendations = [
+        verified_attraction(
+            "Skyline Adventure",
+            1,
+            activity_type="zipline",
+            description="A two-hour zipline experience.",
+            duration_type="short",
+            duration_minutes=120,
+        )
+    ]
+
+    trip = TravelItinerary.model_validate(
+        {
+            "destination": "Chiang Mai, Thailand",
+            "days": [
+                {
+                    "day": 1,
+                    "activities": [
+                        {
+                            "name": "Skyline Adventure",
+                            "activity_type": "zipline",
+                            "description": "Generated description.",
+                            "source_indices": [1],
+                            "duration_type": "half_day",
+                            "duration_minutes": 300,
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    trip_generator.validate_trip_plan(
+        trip,
+        preferences,
+        recommendations,
+    )
+
+    activity = trip.days[0].activities[0]
+
+    assert activity.duration_type == "short"
+    assert activity.duration_minutes == 120
+    assert activity.description == "A two-hour zipline experience."
+
+
+def test_preserves_source_supported_booking_type():
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=1,
+        interests=["adventure"],
+    )
+
+    recommendations = [
+        verified_attraction(
+            "Skyline Adventure",
+            1,
+            activity_type="zipline",
+            description="A guided zipline experience.",
+            booking_type="guided_tour",
+        )
+    ]
+
+    trip = TravelItinerary.model_validate(
+        {
+            "destination": "Chiang Mai, Thailand",
+            "days": [
+                {
+                    "day": 1,
+                    "activities": [
+                        {
+                            "name": "Skyline Adventure",
+                            "activity_type": "zipline",
+                            "description": "Generated description.",
+                            "source_indices": [1],
+                            "booking_type": "self_guided",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    trip_generator.validate_trip_plan(
+        trip,
+        preferences,
+        recommendations,
+    )
+
+    activity = trip.days[0].activities[0]
+
+    assert activity.booking_type == "guided_tour"
+
+
+@pytest.mark.anyio
+async def test_enrich_adds_unused_verified_attraction(monkeypatch):
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=1,
+        interests=["nature"],
+        pace="balanced",
+    )
+
+    recommendations = [
+        verified_attraction(
+            "Waterfall",
+            1,
+            activity_type="waterfall",
+            duration_type="short",
+        ),
+        verified_attraction(
+            "Botanical Garden",
+            2,
+            activity_type="botanical_garden",
+            duration_type="short",
+        ),
+    ]
+
+    trip = TravelItinerary.model_validate(
+        {
+            "destination": "Chiang Mai, Thailand",
+            "days": [
+                {
+                    "day": 1,
+                    "activities": [
+                        {
+                            "name": "Waterfall",
+                            "activity_type": "waterfall",
+                            "description": "A waterfall.",
+                            "source_indices": [1],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    async def fake_add_driving_routes(candidate):
+        for day in candidate.days:
+            if len(day.activities) > 1:
+                day.driving_status = "verified"
+                day.driving_duration_minutes = 15
+        return candidate
+
+    async def fake_resolve_trip_origin(_preferences):
+        return None
+
+    monkeypatch.setattr(
+        trip_generator,
+        "add_driving_routes",
+        fake_add_driving_routes,
+    )
+    monkeypatch.setattr(
+        trip_generator,
+        "resolve_trip_origin",
+        fake_resolve_trip_origin,
+    )
+
+    enriched = await trip_generator.enrich_trip_plan(
+        trip,
+        preferences,
+        recommendations,
+    )
+
+    names = [activity.name for activity in enriched.days[0].activities]
+
+    assert names == ["Waterfall", "Botanical Garden"]
+    assert enriched.days[0].driving_duration_minutes == 15
+    assert enriched.days[0].activities[1].google_place_id == "test-place-2"
+    assert len(trip.days[0].activities) == 1
+
+
+@pytest.mark.anyio
+async def test_enrich_rejects_repeated_experience(monkeypatch):
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=1,
+        interests=["adventure"],
+        pace="balanced",
+    )
+
+    recommendations = [
+        verified_attraction("Zipline A", 1, activity_type="zipline"),
+        verified_attraction("Zipline B", 2, activity_type="zipline"),
+    ]
+
+    trip = TravelItinerary.model_validate(
+        {
+            "destination": "Chiang Mai, Thailand",
+            "days": [
+                {
+                    "day": 1,
+                    "activities": [
+                        {
+                            "name": "Zipline A",
+                            "activity_type": "zipline",
+                            "description": "Zipline activity.",
+                            "source_indices": [1],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    async def unexpected_driving_routes(_trip):
+        pytest.fail("Invalid candidates must not request driving routes")
+
+    async def fake_resolve_trip_origin(_preferences):
+        return None
+
+    monkeypatch.setattr(
+        trip_generator,
+        "add_driving_routes",
+        unexpected_driving_routes,
+    )
+    monkeypatch.setattr(
+        trip_generator,
+        "resolve_trip_origin",
+        fake_resolve_trip_origin,
+    )
+
+    enriched = await trip_generator.enrich_trip_plan(
+        trip,
+        preferences,
+        recommendations,
+    )
+
+    assert [activity.name for activity in enriched.days[0].activities] == ["Zipline A"]
+
+
+@pytest.mark.anyio
+async def test_enrich_rejects_distant_attraction(monkeypatch):
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=1,
+        interests=["nature"],
+        pace="balanced",
+    )
+
+    recommendations = [
+        verified_attraction(
+            "Nearby Waterfall",
+            1,
+            activity_type="waterfall",
+            latitude=18.7,
+            longitude=98.9,
+        ),
+        verified_attraction(
+            "Distant Mountain",
+            2,
+            activity_type="hiking",
+            latitude=19.7,
+            longitude=99.9,
+        ),
+    ]
+
+    trip = TravelItinerary.model_validate(
+        {
+            "destination": "Chiang Mai, Thailand",
+            "days": [
+                {
+                    "day": 1,
+                    "activities": [
+                        {
+                            "name": "Nearby Waterfall",
+                            "activity_type": "waterfall",
+                            "description": "Waterfall visit.",
+                            "source_indices": [1],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    async def unexpected_driving_routes(_trip):
+        pytest.fail("Distant candidates must not request driving routes")
+
+    async def fake_resolve_trip_origin(_preferences):
+        return None
+
+    monkeypatch.setattr(
+        trip_generator,
+        "add_driving_routes",
+        unexpected_driving_routes,
+    )
+    monkeypatch.setattr(
+        trip_generator,
+        "resolve_trip_origin",
+        fake_resolve_trip_origin,
+    )
+
+    enriched = await trip_generator.enrich_trip_plan(
+        trip,
+        preferences,
+        recommendations,
+    )
+
+    assert [activity.name for activity in enriched.days[0].activities] == [
+        "Nearby Waterfall"
+    ]
+
+
+@pytest.mark.anyio
+async def test_enrich_recalculates_accommodation_routes(monkeypatch):
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=1,
+        interests=["nature"],
+        pace="balanced",
+    )
+
+    recommendations = [
+        verified_attraction("Waterfall", 1, activity_type="waterfall"),
+        verified_attraction("Garden", 2, activity_type="botanical_garden"),
+    ]
+
+    trip = TravelItinerary.model_validate(
+        {
+            "destination": "Chiang Mai, Thailand",
+            "days": [
+                {
+                    "day": 1,
+                    "activities": [
+                        {
+                            "name": "Waterfall",
+                            "activity_type": "waterfall",
+                            "description": "Waterfall visit.",
+                            "source_indices": [1],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    async def fake_add_driving_routes(candidate):
+        for day in candidate.days:
+            if len(day.activities) > 1:
+                day.driving_status = "verified"
+                day.driving_duration_minutes = 10
+        return candidate
+
+    async def fake_resolve_trip_origin(_preferences):
+        return (18.7883, 98.9853)
+
+    async def fake_add_total_driving_routes(
+        candidate,
+        origin_latitude,
+        origin_longitude,
+    ):
+        assert (origin_latitude, origin_longitude) == (18.7883, 98.9853)
+        candidate.days[0].total_driving_duration_minutes = 120
+        return candidate
+
+    monkeypatch.setattr(
+        trip_generator,
+        "add_driving_routes",
+        fake_add_driving_routes,
+    )
+    monkeypatch.setattr(
+        trip_generator,
+        "resolve_trip_origin",
+        fake_resolve_trip_origin,
+    )
+    monkeypatch.setattr(
+        trip_generator,
+        "add_total_driving_routes",
+        fake_add_total_driving_routes,
+    )
+
+    enriched = await trip_generator.enrich_trip_plan(
+        trip,
+        preferences,
+        recommendations,
+    )
+
+    assert len(enriched.days[0].activities) == 2
+    assert enriched.days[0].total_driving_duration_minutes == 120
+
+
+@pytest.mark.anyio
+async def test_enrich_rejects_excessive_total_driving(monkeypatch):
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=1,
+        interests=["nature"],
+        pace="balanced",
+    )
+
+    recommendations = [
+        verified_attraction("Waterfall", 1, activity_type="waterfall"),
+        verified_attraction("Garden", 2, activity_type="botanical_garden"),
+    ]
+
+    trip = TravelItinerary.model_validate(
+        {
+            "destination": "Chiang Mai, Thailand",
+            "days": [
+                {
+                    "day": 1,
+                    "activities": [
+                        {
+                            "name": "Waterfall",
+                            "activity_type": "waterfall",
+                            "description": "Waterfall visit.",
+                            "source_indices": [1],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    async def fake_add_driving_routes(candidate):
+        candidate.days[0].driving_status = "verified"
+        candidate.days[0].driving_duration_minutes = 15
+        return candidate
+
+    async def fake_resolve_trip_origin(_preferences):
+        return (18.7883, 98.9853)
+
+    async def fake_add_total_driving_routes(
+        candidate,
+        origin_latitude,
+        origin_longitude,
+    ):
+        candidate.days[0].total_driving_duration_minutes = (
+            MAX_TOTAL_DAILY_DRIVING_MINUTES + 60
+        )
+        return candidate
+
+    monkeypatch.setattr(
+        trip_generator,
+        "add_driving_routes",
+        fake_add_driving_routes,
+    )
+    monkeypatch.setattr(
+        trip_generator,
+        "resolve_trip_origin",
+        fake_resolve_trip_origin,
+    )
+    monkeypatch.setattr(
+        trip_generator,
+        "add_total_driving_routes",
+        fake_add_total_driving_routes,
+    )
+
+    enriched = await trip_generator.enrich_trip_plan(
+        trip,
+        preferences,
+        recommendations,
+    )
+
+    assert len(enriched.days[0].activities) == 1
+    assert enriched.days[0].activities[0].name == "Waterfall"

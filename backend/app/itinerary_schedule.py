@@ -5,7 +5,7 @@ import httpx
 from app.google_places import get_place_opening_hours
 from app.google_routes import get_driving_route
 from app.itinerary_routes import has_verified_location
-from app.opening_hours_validation import find_next_opening_slot
+from app.opening_hours_validation import find_next_valid_slot
 from app.schemas import TravelItinerary
 
 
@@ -14,6 +14,8 @@ ESTIMATED_DURATIONS = {
     "half_day": 240,
     "full_day": 480,
 }
+
+DEFAULT_DURATION_MINUTES = 120
 
 
 async def add_itinerary_schedule(
@@ -38,19 +40,25 @@ async def add_itinerary_schedule(
 
         previous_activity = None
         schedule_available = True
+        first_activity_start = None
+        last_activity_end = None
 
         for activity in day.activities:
             activity.start_time = None
             activity.end_time = None
             activity.estimated_duration_minutes = None
             activity.travel_minutes_from_previous = None
+            activity.schedule_status = "unknown"
+            activity.timing_status = "unknown"
 
-            duration = ESTIMATED_DURATIONS.get(activity.duration_type)
-
-            if duration is None:
-                schedule_available = False
-                previous_activity = activity
-                continue
+            duration = (
+                activity.duration_minutes
+                if activity.duration_minutes is not None
+                else ESTIMATED_DURATIONS.get(
+                    activity.duration_type,
+                    DEFAULT_DURATION_MINUTES,
+                )
+            )
 
             activity.estimated_duration_minutes = duration
 
@@ -92,6 +100,8 @@ async def add_itinerary_schedule(
                 activity.travel_minutes_from_previous = route.duration_minutes
                 current_time += timedelta(minutes=route.duration_minutes)
 
+            periods = None
+
             if day.date is not None and activity.google_place_id:
                 try:
                     place_id = activity.google_place_id
@@ -103,27 +113,44 @@ async def add_itinerary_schedule(
 
                     periods = opening_hours_cache[place_id].periods
 
-                    if periods is not None:
-                        next_start = find_next_opening_slot(
-                            current_time,
-                            duration,
-                            periods,
-                        )
-
-                        if next_start is not None:
-                            current_time = next_start
-
                 except (
                     httpx.HTTPError,
                     ValueError,
                     KeyError,
                     TypeError,
                 ):
-                    pass
+                    periods = None
 
+            valid_slot = find_next_valid_slot(
+                earliest_start=current_time,
+                duration_minutes=duration,
+                periods=periods,
+                experience_start_time=activity.experience_start_time,
+                experience_end_time=activity.experience_end_time,
+            )
+
+            if valid_slot is None:
+                activity.timing_status = "conflict"
+                schedule_available = False
+                previous_activity = activity
+                continue
+
+            current_time = valid_slot
             activity.start_time = current_time.strftime("%H:%M")
             current_time += timedelta(minutes=duration)
             activity.end_time = current_time.strftime("%H:%M")
+            if first_activity_start is None:
+                first_activity_start = current_time - timedelta(minutes=duration)
+
+            last_activity_end = current_time
+            activity.schedule_status = "estimated"
+            if activity.booking_type in {
+                "scheduled_activity",
+                "guided_tour",
+            }:
+                activity.timing_status = "requires_booking_confirmation"
+            else:
+                activity.timing_status = "estimated"
 
             previous_activity = activity
 
@@ -150,10 +177,7 @@ async def add_itinerary_schedule(
                 route = None
 
             if route is not None:
-                first_start = datetime.combine(
-                    current_time.date(),
-                    datetime.strptime(first.start_time, "%H:%M").time(),
-                )
+                first_start = first_activity_start
 
                 departure = first_start - timedelta(minutes=route.duration_minutes)
 
@@ -177,10 +201,7 @@ async def add_itinerary_schedule(
                 route = None
 
             if route is not None:
-                last_end = datetime.combine(
-                    current_time.date(),
-                    datetime.strptime(last.end_time, "%H:%M").time(),
-                )
+                last_end = last_activity_end
 
                 returned = last_end + timedelta(minutes=route.duration_minutes)
 

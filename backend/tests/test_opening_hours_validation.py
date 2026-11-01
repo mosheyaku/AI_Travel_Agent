@@ -1,6 +1,10 @@
 from datetime import datetime
 from app.google_places import OpeningHoursPeriod
-from app.opening_hours_validation import is_within_opening_hours, find_next_opening_slot
+from app.opening_hours_validation import (
+    is_within_opening_hours,
+    find_next_opening_slot,
+    find_next_valid_slot,
+)
 
 
 def make_period(open_day, open_hour, close_day, close_hour):
@@ -103,6 +107,62 @@ def test_find_next_opening_slot_when_closed():
         datetime(2026, 12, 15, 9),
         90,
         [],
+    )
+
+    assert result is None
+
+
+def test_finds_slot_inside_experience_window():
+    earliest = datetime(2026, 11, 8, 9, 0)
+
+    result = find_next_valid_slot(
+        earliest_start=earliest,
+        duration_minutes=120,
+        periods=None,
+        experience_start_time="18:00",
+        experience_end_time="22:00",
+    )
+
+    assert result == datetime(2026, 11, 8, 18, 0)
+
+
+def test_rejects_experience_that_cannot_fit():
+    earliest = datetime(2026, 11, 8, 20, 30)
+
+    result = find_next_valid_slot(
+        earliest_start=earliest,
+        duration_minutes=120,
+        periods=None,
+        experience_start_time="18:00",
+        experience_end_time="22:00",
+    )
+
+    assert result is None
+
+
+def test_rejects_partial_experience_window():
+    earliest = datetime(2026, 11, 8, 9, 0)
+
+    result = find_next_valid_slot(
+        earliest_start=earliest,
+        duration_minutes=90,
+        periods=None,
+        experience_start_time="18:00",
+        experience_end_time=None,
+    )
+
+    assert result is None
+
+
+def test_rejects_visit_that_exceeds_same_day():
+    earliest = datetime(2026, 11, 8, 23, 0)
+
+    result = find_next_valid_slot(
+        earliest_start=earliest,
+        duration_minutes=120,
+        periods=None,
+        experience_start_time=None,
+        experience_end_time=None,
     )
 
     assert result is None

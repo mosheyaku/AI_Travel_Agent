@@ -52,6 +52,14 @@ async def test_filters_unverified_recommendations(monkeypatch):
                 "description": "Hiking trails in Doi Inthanon National Park.",
                 "activity_type": "hiking",
                 "duration_type": "unknown",
+                "booking_type": "unknown",
+                "evidence": [
+                    {
+                        "claim": "Doi Inthanon National Park has hiking trails.",
+                        "source_index": 1,
+                        "quote": "Doi Inthanon National Park has hiking trails.",
+                    }
+                ],
             }
         )
 
@@ -105,6 +113,20 @@ async def test_verification_removes_unsupported_activity(monkeypatch):
                     ),
                     "activity_type": "hiking",
                     "duration_type": "unknown",
+                    "booking_type": "unknown",
+                    "evidence": [
+                        {
+                            "claim": (
+                                "The park features waterfalls, "
+                                "hiking trails, and a reservoir."
+                            ),
+                            "source_index": 1,
+                            "quote": (
+                                "The park features waterfalls, "
+                                "hiking trails, and a reservoir."
+                            ),
+                        }
+                    ],
                 }
             ),
         ]
@@ -173,6 +195,20 @@ async def test_excludes_sources_about_unnamed_attractions(monkeypatch):
                     ),
                     "activity_type": "elephant_sanctuary",
                     "duration_type": "unknown",
+                    "booking_type": "unknown",
+                    "evidence": [
+                        {
+                            "claim": (
+                                "Elephant Nature Park is an elephant "
+                                "rescue and rehabilitation center."
+                            ),
+                            "source_index": 2,
+                            "quote": (
+                                "Elephant Nature Park is an elephant "
+                                "rescue and rehabilitation center."
+                            ),
+                        }
+                    ],
                 }
             ),
         ]
@@ -264,9 +300,23 @@ async def test_verification_corrects_unsupported_duration(monkeypatch):
             json.dumps(
                 {
                     "verified": True,
-                    "description": "A waterfall accessible via a walking trail.",
+                    "description": ("A waterfall accessible via a walking trail."),
                     "activity_type": "waterfall",
                     "duration_type": "unknown",
+                    "booking_type": "unknown",
+                    "evidence": [
+                        {
+                            "claim": (
+                                "Example Waterfall is accessible "
+                                "via a walking trail."
+                            ),
+                            "source_index": 1,
+                            "quote": (
+                                "Example Waterfall is accessible "
+                                "via a walking trail."
+                            ),
+                        }
+                    ],
                 }
             ),
         ]
@@ -313,7 +363,7 @@ async def test_rejects_invalid_verified_activity_type(monkeypatch):
             json.dumps(
                 {
                     "verified": True,
-                    "description": "An adventure park offering zipline activities.",
+                    "description": ("An adventure park offering zipline activities."),
                     "activity_type": "Zipline Experience",
                     "duration_type": "unknown",
                 }
@@ -334,3 +384,112 @@ async def test_rejects_invalid_verified_activity_type(monkeypatch):
 
     assert result == []
     assert mock_generate.await_count == 2
+
+
+@pytest.mark.anyio
+async def test_verification_corrects_unsupported_booking_type(monkeypatch):
+    recommendation = AttractionRecommendation(
+        name="Example Waterfall",
+        category="nature",
+        activity_type="waterfall",
+        description="A waterfall visit.",
+        relevance_reason="Matches nature interests.",
+        source_indices=[1],
+        booking_type="guided_tour",
+    )
+
+    sources = [
+        {
+            "title": "Example Waterfall",
+            "content": "Example Waterfall is accessible via a walking trail.",
+        }
+    ]
+
+    mock_generate = AsyncMock(
+        side_effect=[
+            json.dumps({"source_indices": [1]}),
+            json.dumps(
+                {
+                    "verified": True,
+                    "description": ("A waterfall accessible via a walking trail."),
+                    "activity_type": "waterfall",
+                    "duration_type": "unknown",
+                    "booking_type": "unknown",
+                    "evidence": [
+                        {
+                            "claim": (
+                                "Example Waterfall is accessible "
+                                "via a walking trail."
+                            ),
+                            "source_index": 1,
+                            "quote": (
+                                "Example Waterfall is accessible "
+                                "via a walking trail."
+                            ),
+                        }
+                    ],
+                }
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(
+        verification,
+        "generate_text",
+        mock_generate,
+    )
+
+    result = await verification.verify_recommendations(
+        [recommendation],
+        sources,
+        destination="Chiang Mai, Thailand",
+    )
+
+    assert len(result) == 1
+    assert result[0].booking_type == "unknown"
+
+
+def test_validates_factual_evidence():
+    sources = [
+        {
+            "index": 2,
+            "content": ("Queen Sirikit Botanic Garden features " "a canopy walkway."),
+        }
+    ]
+
+    valid_evidence = [
+        {
+            "claim": "The garden has a canopy walkway.",
+            "source_index": 2,
+            "quote": "features a canopy walkway",
+        }
+    ]
+
+    assert verification.validate_factual_evidence(
+        valid_evidence,
+        sources,
+    )
+
+    invalid_evidence = [
+        {
+            "claim": "The garden has hot springs.",
+            "source_index": 2,
+            "quote": "features hot springs",
+        }
+    ]
+
+    assert not verification.validate_factual_evidence(
+        invalid_evidence,
+        sources,
+    )
+
+    assert not verification.validate_factual_evidence(
+        [
+            {
+                "claim": "The garden has a canopy walkway.",
+                "source_index": 1,
+                "quote": "features a canopy walkway",
+            }
+        ],
+        sources,
+    )

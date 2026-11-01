@@ -91,6 +91,70 @@ def find_next_opening_slot(
     return None
 
 
+def find_next_valid_slot(
+    earliest_start: datetime,
+    duration_minutes: int,
+    periods: list[OpeningHoursPeriod] | None,
+    experience_start_time: str | None,
+    experience_end_time: str | None,
+) -> datetime | None:
+    """Find the earliest same-day slot satisfying all known time windows."""
+    if duration_minutes <= 0:
+        return None
+
+    if (experience_start_time is None and experience_end_time is not None) or (
+        experience_start_time is not None and experience_end_time is None
+    ):
+        return None
+
+    candidate = earliest_start.replace(
+        second=0,
+        microsecond=0,
+    )
+
+    if candidate < earliest_start:
+        candidate += timedelta(minutes=1)
+
+    day_end = datetime.combine(
+        earliest_start.date() + timedelta(days=1),
+        datetime.min.time(),
+    )
+
+    if experience_start_time is not None:
+        window_start = datetime.combine(
+            earliest_start.date(),
+            datetime.strptime(experience_start_time, "%H:%M").time(),
+        )
+        window_end = datetime.combine(
+            earliest_start.date(),
+            datetime.strptime(experience_end_time, "%H:%M").time(),
+        )
+
+        if window_end <= window_start:
+            window_end += timedelta(days=1)
+
+        candidate = max(candidate, window_start)
+    else:
+        window_end = day_end
+
+    while candidate + timedelta(minutes=duration_minutes) <= min(
+        day_end,
+        window_end,
+    ):
+        visit_end = candidate + timedelta(minutes=duration_minutes)
+
+        if periods is None or is_within_opening_hours(
+            candidate,
+            visit_end,
+            periods,
+        ):
+            return candidate
+
+        candidate += timedelta(minutes=1)
+
+    return None
+
+
 async def validate_itinerary_opening_hours(
     trip: TravelItinerary,
 ) -> TravelItinerary:
