@@ -7,6 +7,7 @@ from app.schemas import TravelItinerary, TravelPreferences
 from app.trip_generator import (
     MAX_GENERATION_ATTEMPTS,
     build_trip_prompt,
+    enrich_trip_plan,
     evaluate_trip_candidate,
     find_driving_issues,
     find_planning_issues,
@@ -25,6 +26,11 @@ from app.trip_planning import (
 )
 from app.itinerary_schedule import add_itinerary_schedule, add_itinerary_dates
 from app.opening_hours_validation import validate_itinerary_opening_hours
+from app.schedule_repair import (
+    repair_opening_hours_conflicts,
+    count_opening_hours_conflicts,
+    count_timing_conflicts,
+)
 
 
 class TravelState(TypedDict, total=False):
@@ -173,6 +179,19 @@ def append_feedback_node(state: TravelState) -> dict:
     }
 
 
+async def optimize_node(state: TravelState) -> dict:
+    """Enrich a validated itinerary before scheduling."""
+    trip = TravelItinerary.model_validate(state["trip"])
+
+    enriched = await enrich_trip_plan(
+        trip,
+        state["preferences"],
+        state["recommendations"],
+    )
+
+    return {"trip": enriched.model_dump(mode="json")}
+
+
 async def schedule_node(state: TravelState) -> dict:
     """Add dates, accommodation travel times, and opening-hours validation."""
     trip = TravelItinerary.model_validate(state["trip"])
@@ -188,6 +207,48 @@ async def schedule_node(state: TravelState) -> dict:
     )
 
     await validate_itinerary_opening_hours(trip)
+
+    trip = await repair_opening_hours_conflicts(
+        trip,
+        origin=origin,
+    )
+
+    # Some attractions close too early for a 09:00 departure. Try an
+    # earlier day start before accepting a schedule with known conflicts.
+    if count_opening_hours_conflicts(trip):
+        earlier = TravelItinerary.model_validate(state["trip"])
+        add_itinerary_dates(earlier, preferences.start_date)
+        await add_itinerary_schedule(earlier, start_time="08:00", origin=origin)
+        await validate_itinerary_opening_hours(earlier)
+        earlier = await repair_opening_hours_conflicts(earlier, origin=origin)
+        if count_opening_hours_conflicts(earlier) < count_opening_hours_conflicts(trip):
+            trip = earlier
+
+    remaining_conflicts = [
+        f"Day {day.day}: {activity.name}"
+        for day in trip.days
+        for activity in day.activities
+        if activity.opening_hours_status == "conflict"
+    ]
+
+    if remaining_conflicts:
+        raise ValueError(
+            "Could not create an itinerary without opening-hours "
+            "conflicts: " + "; ".join(remaining_conflicts)
+        )
+
+    timing_conflicts = [
+        f"Day {day.day}: {activity.name}"
+        for day in trip.days
+        for activity in day.activities
+        if activity.timing_status == "conflict"
+    ]
+
+    if timing_conflicts:
+        raise ValueError(
+            "Could not schedule activities within their experience windows: "
+            + "; ".join(timing_conflicts)
+        )
 
     return {"trip": trip.model_dump(mode="json")}
 
@@ -236,6 +297,7 @@ builder.add_node("evaluate", evaluate_node)
 builder.add_node("feedback", append_feedback_node)
 builder.add_node("repair", repair_node)
 builder.add_node("schedule", schedule_node)
+builder.add_node("optimize", optimize_node)
 
 builder.add_edge(START, "recommend")
 builder.add_edge("recommend", "generate")
@@ -245,14 +307,15 @@ builder.add_conditional_edges(
     "evaluate",
     decide_next,
     {
-        "finish": "schedule",
+        "finish": "optimize",
         "retry": "feedback",
         "repair": "repair",
     },
 )
 
 builder.add_edge("feedback", "generate")
-builder.add_edge("repair", "schedule")
+builder.add_edge("repair", "optimize")
+builder.add_edge("optimize", "schedule")
 builder.add_edge("schedule", END)
 
 travel_graph = builder.compile()

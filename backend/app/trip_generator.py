@@ -86,6 +86,10 @@ def validate_trip_plan(
             activity.longitude = original.get("longitude")
             activity.google_place_id = original.get("google_place_id")
             activity.duration_type = original.get("duration_type", "unknown")
+            activity.duration_minutes = original.get("duration_minutes")
+            activity.booking_type = original.get("booking_type", "unknown")
+            activity.experience_start_time = original.get("experience_start_time")
+            activity.experience_end_time = original.get("experience_end_time")
 
             seen_names.add(name)
 
@@ -296,81 +300,75 @@ async def repair_trip_plan(
     preferences: TravelPreferences,
     recommendations: list[dict],
 ) -> TravelItinerary | None:
-    """Repair an invalid itinerary using limited activity edits."""
-    original_count = sum(len(day.activities) for day in trip.days)
+    """Repair an itinerary through a bounded sequence of activity edits."""
+    from collections import deque
 
-    best: TravelItinerary | None = None
-    best_score: tuple[int, int] | None = None
-    checked = 0
-    max_candidates = 80
+    max_states = 300
+    max_depth = 4
 
-    for source_index, source_day in enumerate(trip.days):
-        for activity_index in range(len(source_day.activities)):
-            destinations = [
-                source_index,
-                *(index for index in range(len(trip.days)) if index != source_index),
-                None,
-            ]
+    def signature(candidate: TravelItinerary) -> tuple:
+        return tuple(
+            tuple(activity.name for activity in day.activities)
+            for day in candidate.days
+        )
 
-            for destination_index in destinations:
-                if destination_index == source_index:
-                    positions = range(len(source_day.activities))
-                elif destination_index is None:
-                    positions = (0,)
-                else:
-                    positions = range(len(trip.days[destination_index].activities) + 1)
+    def activity_count(candidate: TravelItinerary) -> int:
+        return sum(len(day.activities) for day in candidate.days)
 
-                for position in positions:
-                    if destination_index == source_index and position == activity_index:
+    def make_neighbors(candidate: TravelItinerary):
+        for source_index, source_day in enumerate(candidate.days):
+            for activity_index in range(len(source_day.activities)):
+                for destination_index in range(len(candidate.days)):
+                    if destination_index == source_index:
                         continue
 
-                    if checked >= max_candidates:
-                        return best
+                    updated = candidate.model_copy(deep=True)
+                    activity = updated.days[source_index].activities.pop(activity_index)
+                    updated.days[destination_index].activities.append(activity)
 
-                    checked += 1
+                    reset_route_data(updated)
+                    yield updated
 
-                    candidate = trip.model_copy(deep=True)
+                updated = candidate.model_copy(deep=True)
+                updated.days[source_index].activities.pop(activity_index)
 
-                    activity = candidate.days[source_index].activities.pop(
-                        activity_index
-                    )
+                reset_route_data(updated)
+                yield updated
 
-                    if destination_index is not None:
-                        candidate.days[destination_index].activities.insert(
-                            position, activity
-                        )
+    original_count = activity_count(trip)
+    queue = deque([(trip.model_copy(deep=True), 0)])
+    visited = {signature(trip)}
 
-                    reset_route_data(candidate)
+    best = None
+    best_score = None
+    evaluated = 0
 
-                    if find_planning_issues(candidate, preferences.pace):
-                        continue
+    while queue and evaluated < max_states:
+        candidate, depth = queue.popleft()
+        evaluated += 1
 
-                    validate_trip_plan(
-                        candidate,
-                        preferences,
-                        recommendations,
-                    )
+        if not find_planning_issues(candidate, preferences.pace):
+            try:
+                validate_trip_plan(
+                    candidate,
+                    preferences,
+                    recommendations,
+                )
+            except ValueError:
+                continue
 
-                    await add_driving_routes(candidate)
+            await add_driving_routes(candidate)
 
-                    if find_driving_issues(candidate):
-                        continue
-
-                    if any(
-                        len(day.activities) > 1 and day.driving_status != "verified"
-                        for day in candidate.days
-                    ):
-                        continue
-
-                    count = sum(len(day.activities) for day in candidate.days)
-
-                    minutes = sum(
-                        day.driving_duration_minutes or 0 for day in candidate.days
-                    )
-
+            if not find_driving_issues(candidate):
+                if not any(
+                    len(day.activities) > 1 and day.driving_status != "verified"
+                    for day in candidate.days
+                ):
                     score = (
-                        original_count - count,
-                        minutes,
+                        original_count - activity_count(candidate),
+                        sum(
+                            day.driving_duration_minutes or 0 for day in candidate.days
+                        ),
                     )
 
                     if best_score is None or score < best_score:
@@ -380,7 +378,124 @@ async def repair_trip_plan(
                         if score == (0, 0):
                             return best
 
+        if depth >= max_depth:
+            continue
+
+        for neighbor in make_neighbors(candidate):
+            state = signature(neighbor)
+
+            if state in visited:
+                continue
+
+            visited.add(state)
+            queue.append((neighbor, depth + 1))
+
     return best
+
+
+async def enrich_trip_plan(
+    trip: TravelItinerary,
+    preferences: TravelPreferences,
+    recommendations: list[dict],
+) -> TravelItinerary:
+    """Add unused attractions only when driving and planning constraints remain valid."""
+    enriched = trip.model_copy(deep=True)
+    origin = await resolve_trip_origin(preferences)
+
+    used_names = {
+        activity.name.strip().casefold()
+        for day in enriched.days
+        for activity in day.activities
+    }
+
+    unused = [
+        recommendation
+        for recommendation in recommendations
+        if recommendation["name"].strip().casefold() not in used_names
+        and recommendation.get("location_status") == LocationStatus.VERIFIED
+        and recommendation.get("latitude") is not None
+        and recommendation.get("longitude") is not None
+        and recommendation.get("google_place_id")
+    ]
+
+    for recommendation in unused:
+        best_candidate = None
+        best_minutes = float("inf")
+
+        for day_index, day in enumerate(enriched.days):
+            if any(activity.duration_type == "full_day" for activity in day.activities):
+                continue
+
+            candidate = enriched.model_copy(deep=True)
+
+            activity_data = {
+                "name": recommendation["name"],
+                "activity_type": recommendation["activity_type"],
+                "description": recommendation.get("description", ""),
+                "source_indices": recommendation["source_indices"],
+            }
+
+            from app.schemas import ItineraryActivity
+
+            candidate.days[day_index].activities.append(
+                ItineraryActivity.model_validate(activity_data)
+            )
+
+            try:
+                validate_trip_plan(
+                    candidate,
+                    preferences,
+                    recommendations,
+                )
+            except ValueError:
+                continue
+
+            if find_planning_issues(candidate, preferences.pace):
+                continue
+
+            reset_route_data(candidate)
+            await add_driving_routes(candidate)
+
+            if find_driving_issues(candidate):
+                continue
+
+            if any(
+                len(candidate_day.activities) > 1
+                and candidate_day.driving_status != "verified"
+                for candidate_day in candidate.days
+            ):
+                continue
+
+            if origin is not None:
+                await add_total_driving_routes(
+                    candidate,
+                    origin_latitude=origin[0],
+                    origin_longitude=origin[1],
+                )
+
+                if find_total_driving_issues(candidate):
+                    continue
+
+                minutes = candidate.days[day_index].total_driving_duration_minutes
+
+                if minutes is None:
+                    continue
+            else:
+                minutes = candidate.days[day_index].driving_duration_minutes
+
+                if minutes is None and len(candidate.days[day_index].activities) > 1:
+                    continue
+
+                minutes = minutes or 0
+
+            if minutes < best_minutes:
+                best_candidate = candidate
+                best_minutes = minutes
+
+        if best_candidate is not None:
+            enriched = best_candidate
+
+    return enriched
 
 
 def build_trip_prompt(
@@ -543,6 +658,8 @@ async def generate_trip_plan(
     recommendations = verified_recommendations
     prompt = build_trip_prompt(preferences, recommendations)
 
+    invalid_candidates = []
+
     fallback_trip = None
 
     for attempt in range(MAX_GENERATION_ATTEMPTS):
@@ -555,7 +672,13 @@ async def generate_trip_plan(
         issues = await evaluate_trip_candidate(trip, preferences)
 
         if not issues:
-            return trip
+            return await enrich_trip_plan(
+                trip,
+                preferences,
+                recommendations,
+            )
+
+        invalid_candidates.append(trip)
 
         # Only daily round-trip driving limits are soft quality issues.
         planning_issues = find_planning_issues(trip, preferences.pace)
@@ -579,23 +702,30 @@ async def generate_trip_plan(
             if fallback_trip is not None:
                 return fallback_trip
 
-            repaired = await repair_trip_plan(
-                trip,
-                preferences,
-                recommendations,
-            )
+            for invalid_trip in invalid_candidates:
+                repaired = await repair_trip_plan(
+                    invalid_trip,
+                    preferences,
+                    recommendations,
+                )
 
-            if repaired is not None:
+                if repaired is None:
+                    continue
+
                 origin = await resolve_trip_origin(preferences)
 
                 if origin is not None:
-                    repaired = await add_total_driving_routes(
+                    await add_total_driving_routes(
                         repaired,
                         origin_latitude=origin[0],
                         origin_longitude=origin[1],
                     )
 
-                return repaired
+                return await enrich_trip_plan(
+                    repaired,
+                    preferences,
+                    recommendations,
+                )
 
             raise ValueError(
                 "The trip plan failed route validation: " + "; ".join(issues)

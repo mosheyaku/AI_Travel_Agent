@@ -15,6 +15,14 @@ AttractionCategory = Literal[
 ]
 
 
+BookingType = Literal[
+    "self_guided",
+    "scheduled_activity",
+    "guided_tour",
+    "unknown",
+]
+
+
 class AttractionRecommendation(BaseModel):
     name: str = Field(description="Name of the attraction")
     category: AttractionCategory
@@ -37,6 +45,16 @@ class AttractionRecommendation(BaseModel):
     distance_km: float | None = None
     google_place_id: str | None = None
     duration_type: Literal["short", "half_day", "full_day", "unknown"] = "unknown"
+    duration_minutes: int | None = Field(default=None, gt=0)
+    booking_type: BookingType = "unknown"
+    experience_start_time: str | None = Field(
+        default=None,
+        pattern=r"^([01]\d|2[0-3]):[0-5]\d$",
+    )
+    experience_end_time: str | None = Field(
+        default=None,
+        pattern=r"^([01]\d|2[0-3]):[0-5]\d$",
+    )
 
 
 class AttractionRecommendations(BaseModel):
@@ -97,14 +115,33 @@ class ItineraryActivity(BaseModel):
     longitude: float | None = None
     google_place_id: str | None = None
     duration_type: Literal["short", "half_day", "full_day", "unknown"] = "unknown"
+    duration_minutes: int | None = Field(default=None, gt=0)
+    booking_type: BookingType = "unknown"
 
     # Estimated schedule, calculated after itinerary generation.
     start_time: str | None = None
     end_time: str | None = None
+    schedule_status: Literal["estimated", "verified", "unknown"] = "unknown"
     estimated_duration_minutes: int | None = None
     travel_minutes_from_previous: int | None = None
 
     opening_hours_status: Literal["verified", "conflict", "unknown"] = "unknown"
+
+    timing_status: Literal[
+        "estimated",
+        "requires_booking_confirmation",
+        "conflict",
+        "unknown",
+    ] = "unknown"
+
+    experience_start_time: str | None = Field(
+        default=None,
+        pattern=r"^([01]\d|2[0-3]):[0-5]\d$",
+    )
+    experience_end_time: str | None = Field(
+        default=None,
+        pattern=r"^([01]\d|2[0-3]):[0-5]\d$",
+    )
 
 
 class ItineraryDay(BaseModel):

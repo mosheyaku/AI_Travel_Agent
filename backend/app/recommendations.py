@@ -10,6 +10,7 @@ from app.deduplication import deduplicate_attractions
 from app.verification import verify_recommendations
 from app.attraction_locations import validate_attraction_locations
 from app.duration_enrichment import enrich_attraction_durations
+from app.experience_enrichment import enrich_attraction_experiences
 
 
 async def recommend_attractions(
@@ -90,7 +91,8 @@ Return a JSON object with this exact structure:
       "duration_type": "unknown",
       "description": "Description supported by the sources",
       "relevance_reason": "Why it matches the user's request",
-      "source_indices": [1]
+      "source_indices": [1],
+      "booking_type": "unknown"
     }}
   ]
 }}
@@ -107,6 +109,10 @@ Requirements:
 - If the source mentions a specific provider, use its name instead of
   describing the general activity.
 - Do not combine multiple attractions or providers into one recommendation.
+- Do not recommend a packaged tour under the name of one of its stops.
+- Do not claim an activity at a park or dam solely because the broader
+  region has that activity; verify that this exact provider offers it.
+- Distinguish the attraction's own features from features of nearby places.
 - If a source only describes a general activity without identifying
   a specific location or provider, do not recommend it.
 - Do not rename attractions to make them sound more exciting.
@@ -139,6 +145,16 @@ Requirements:
   water_park, safari, temple, cooking_class.
 - Do not create provider-specific activity types.
 - Do not invent an activity type unsupported by the sources.
+
+- Classify booking_type as self_guided, scheduled_activity,
+  guided_tour, or unknown.
+- Use self_guided for attractions visitors can explore independently.
+- Use scheduled_activity for activities requiring a specific
+  departure time or booked session.
+- Use guided_tour for organized tours led by a guide.
+- Base booking_type only on information supported by the sources.
+- If the sources do not establish the booking type, use unknown.
+- Do not assume booking type from activity_type alone.
 """
 
         valid_indices = {index for index, _ in query_sources}
@@ -258,11 +274,16 @@ Return valid JSON using only these source indices.
             flush=True,
         )
 
-        if destination:
-            enriched = await enrich_attraction_durations(
-                [recommendation.model_dump() for recommendation in recommendations],
-                destination,
-            )
+        enriched = await enrich_attraction_durations(
+            [recommendation.model_dump() for recommendation in recommendations],
+            destination,
+        )
+
+        enriched = await enrich_attraction_experiences(
+            enriched,
+            destination,
+        )
+
         recommendations = [
             AttractionRecommendation.model_validate(item) for item in enriched
         ]

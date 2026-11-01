@@ -1,4 +1,3 @@
-
 import asyncio
 import json
 
@@ -12,15 +11,38 @@ from app.search import search_attractions
 DurationType = Literal["short", "half_day", "full_day", "unknown"]
 
 
+def classify_duration(duration_minutes: int) -> DurationType:
+    if duration_minutes <= 120:
+        return "short"
+
+    if duration_minutes < 420:
+        return "half_day"
+
+    return "full_day"
+
+
 class DurationAssessment(BaseModel):
     duration_type: DurationType
+    duration_minutes: int | None = None
     source_indices: list[int]
 
 
 async def enrich_attraction_duration(attraction: dict, destination: str) -> dict:
     """Find source-supported duration information for one attraction."""
-    if attraction.get("duration_type") != "unknown":
-        return attraction
+
+    existing_duration = attraction.get("duration_minutes")
+
+    if existing_duration is not None:
+        return {
+            **attraction,
+            "duration_type": classify_duration(existing_duration),
+        }
+
+    unknown_duration = {
+        **attraction,
+        "duration_type": "unknown",
+        "duration_minutes": None,
+    }
 
     query = (
         f'"{attraction["name"]}" {destination} '
@@ -36,7 +58,7 @@ async def enrich_attraction_duration(attraction: dict, destination: str) -> dict
     ]
 
     if not results:
-        return attraction
+        return unknown_duration
 
     source_text = "\n\n".join(
         f"[{index}] {result['title']}\n"
@@ -69,11 +91,24 @@ Rules:
 - If evidence is missing or ambiguous, use "unknown".
 - Cite the numbered sources supporting the classification.
 - If duration_type is "unknown", return an empty source_indices list.
+- Extract duration_minutes only when the sources explicitly state
+  the duration of the specific visitor experience.
+- Convert explicitly stated hours to minutes.
+- Do not invent a precise duration from duration_type.
+- If sources provide a duration range, use null for duration_minutes.
+- If no exact duration is supported, use null.
+- For a general park, garden, trail, or waterfall, do not use a tour
+  package's duration as the independent visit duration.
+- A source saying an attraction is open for 8 hours is NOT evidence
+  that visitors spend 8 hours there.
+- If duration_minutes is provided, classify duration_type consistently.
 - Return valid JSON only.
+
 
 JSON structure:
 {{
   "duration_type": "unknown",
+  "duration_minutes": null,
   "source_indices": []
 }}
 """
@@ -85,7 +120,7 @@ JSON structure:
             json.loads(response_text)
         )
     except (json.JSONDecodeError, ValidationError):
-        return attraction
+            return unknown_duration
 
     valid_indices = set(range(1, len(results) + 1))
 
@@ -94,11 +129,24 @@ JSON structure:
         or not assessment.source_indices
         or not set(assessment.source_indices).issubset(valid_indices)
     ):
-        return attraction
+        return unknown_duration
+
+    duration_minutes = assessment.duration_minutes
+
+    if duration_minutes is not None:
+        if duration_minutes <= 0 or duration_minutes > 1440:
+            return unknown_duration
+        duration_type = classify_duration(duration_minutes)
+    else:
+        # A source-supported duration category is useful even when a
+        # precise minute count is unavailable. The scheduler will use
+        # its existing category estimate and mark the schedule estimated.
+        duration_type = assessment.duration_type
 
     return {
         **attraction,
-        "duration_type": assessment.duration_type,
+        "duration_type": duration_type,
+        "duration_minutes": duration_minutes,
     }
 
 

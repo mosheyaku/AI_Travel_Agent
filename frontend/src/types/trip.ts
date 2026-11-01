@@ -31,6 +31,7 @@ export interface ItineraryActivity {
   longitude: number | null;
   google_place_id: string | null;
   duration_type: "short" | "half_day" | "full_day" | "unknown";
+  schedule_status: "estimated" | "verified" | "unknown";
 
   start_time: string | null;
   end_time: string | null;
