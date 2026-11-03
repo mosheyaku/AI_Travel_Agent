@@ -3,7 +3,9 @@ import httpx
 from app.google_routes import get_driving_route
 from app.location_validation import LocationStatus
 from app.schemas import ItineraryActivity, TravelItinerary
+
 MAX_DAILY_DRIVING_MINUTES = 90
+
 
 def has_verified_location(activity: ItineraryActivity) -> bool:
     """Check whether an activity has a verified Google location."""
@@ -19,6 +21,9 @@ async def add_driving_routes(trip: TravelItinerary) -> TravelItinerary:
     """Add driving totals between consecutive activities in each day."""
 
     for day in trip.days:
+        day.driving_distance_km = None
+        day.driving_duration_minutes = None
+        day.driving_status = "unknown"
         if len(day.activities) < 2:
             continue
 
@@ -31,8 +36,7 @@ async def add_driving_routes(trip: TravelItinerary) -> TravelItinerary:
             day.activities[1:],
         ):
             if not (
-                has_verified_location(origin)
-                and has_verified_location(destination)
+                has_verified_location(origin) and has_verified_location(destination)
             ):
                 all_routes_available = False
                 break
@@ -58,7 +62,7 @@ async def add_driving_routes(trip: TravelItinerary) -> TravelItinerary:
         if all_routes_available:
             day.driving_distance_km = round(total_distance, 1)
             day.driving_duration_minutes = total_minutes
-            
+
             if total_minutes > MAX_DAILY_DRIVING_MINUTES:
                 day.driving_status = "exceeds_limit"
             else:
@@ -87,6 +91,7 @@ def find_driving_issues(
 
     return issues
 
+
 MAX_TOTAL_DAILY_DRIVING_MINUTES = 180
 
 
@@ -109,7 +114,7 @@ def find_total_driving_issues(
 
     return issues
 
-    
+
 async def add_total_driving_routes(
     trip: TravelItinerary,
     origin_latitude: float,
@@ -118,6 +123,8 @@ async def add_total_driving_routes(
     """Calculate daily round-trip driving from an estimated city center."""
 
     for day in trip.days:
+        day.total_driving_distance_km = None
+        day.total_driving_duration_minutes = None
         if not day.activities:
             continue
 
@@ -126,10 +133,7 @@ async def add_total_driving_routes(
 
         points = [
             (origin_latitude, origin_longitude),
-            *[
-                (activity.latitude, activity.longitude)
-                for activity in day.activities
-            ],
+            *[(activity.latitude, activity.longitude) for activity in day.activities],
             (origin_latitude, origin_longitude),
         ]
 

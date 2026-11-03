@@ -279,6 +279,17 @@ Return valid JSON using only these source indices.
             destination,
         )
 
+        for attraction in enriched:
+            print(
+                "DURATION DEBUG:",
+                attraction["name"],
+                "type:",
+                attraction.get("duration_type"),
+                "minutes:",
+                attraction.get("duration_minutes"),
+                flush=True,
+            )
+
         enriched = await enrich_attraction_experiences(
             enriched,
             destination,

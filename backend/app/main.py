@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI, Query, HTTPException
 
 from app.config import settings
@@ -12,6 +14,9 @@ from app.google_places import (
     AccommodationSuggestion,
     search_accommodations,
 )
+
+logger = logging.getLogger(__name__)
+
 
 app = FastAPI(
     title=settings.app_name,
@@ -99,11 +104,7 @@ async def generate_trip(
 ) -> dict:
     """Generate a trip using the LangGraph workflow."""
     try:
-        result = await travel_graph.ainvoke(
-            {
-                "preferences": preferences,
-            }
-        )
+        result = await travel_graph.ainvoke({"preferences": preferences})
 
         return {
             "trip": result["trip"],
@@ -111,9 +112,12 @@ async def generate_trip(
         }
 
     except ValueError as exc:
-        print(f"Trip generation error: {exc!r}", flush=True)
+        logger.warning("Trip planning failed: %s", exc)
 
         raise HTTPException(
-            status_code=502,
-            detail="The trip planning service returned an invalid response.",
+            status_code=422,
+            detail=(
+                "Could not generate a valid itinerary "
+                "with the available attractions."
+            ),
         ) from exc

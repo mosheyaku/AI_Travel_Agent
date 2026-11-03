@@ -217,8 +217,17 @@ Requirements:
 - Reject descriptions that mix facts about two different named places.
 - Reject an activity when sources mention it only for the wider region,
   a different provider, or an unnamed tour rather than this exact place.
-- Reject a combined tour/package if its Google-mappable name is merely one
-  stop on the tour, unless the recommendation describes that stop alone.
+- A recommendation must identify one specific physical attraction,
+  trail, park, or activity provider.
+- Reject packaged tours that combine multiple independently visitable
+  attractions or locations.
+- Reject tour package titles presented as attraction names, even when
+  one of the stops is a real, identifiable place.
+- Do not treat a tour package and one of its stops as the same attraction.
+- A guided activity offered by one identifiable provider is valid,
+  even when it includes multiple activities at that provider's location.
+- If the recommendation name refers to a package rather than a
+  specific attraction or provider, return verified=false.
 - For each claim in the description, check it against the exact attraction
   in the identified source; omit claims whose attribution is ambiguous.
 - A nearby attraction or activity does not establish that this provider offers it.
