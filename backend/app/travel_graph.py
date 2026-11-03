@@ -1,3 +1,6 @@
+import logging
+
+logger = logging.getLogger(__name__)
 from typing import Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -28,8 +31,10 @@ from app.itinerary_schedule import add_itinerary_schedule, add_itinerary_dates
 from app.opening_hours_validation import validate_itinerary_opening_hours
 from app.schedule_repair import (
     repair_opening_hours_conflicts,
+    remove_unschedulable_activities,
     count_opening_hours_conflicts,
     count_timing_conflicts,
+    fill_empty_days,
 )
 
 
@@ -44,6 +49,7 @@ class TravelState(TypedDict, total=False):
     attempts: int
     fallback: TravelItinerary | None
     last_error: str
+    base_trip: dict
 
 
 async def recommend_node(state: TravelState) -> dict:
@@ -64,6 +70,12 @@ async def recommend_node(state: TravelState) -> dict:
         and item.get("longitude") is not None
         and item.get("google_place_id")
     ]
+
+    logger.info(
+        "Attraction discovery: %d total recommendations, %d verified",
+        len(result["recommendations"]),
+        len(recommendations),
+    )
 
     if not recommendations:
         raise ValueError("No attractions with verified locations are available.")
@@ -189,68 +201,108 @@ async def optimize_node(state: TravelState) -> dict:
         state["recommendations"],
     )
 
-    return {"trip": enriched.model_dump(mode="json")}
-
-
-async def schedule_node(state: TravelState) -> dict:
-    """Add dates, accommodation travel times, and opening-hours validation."""
-    trip = TravelItinerary.model_validate(state["trip"])
-    preferences = state["preferences"]
-
-    add_itinerary_dates(trip, preferences.start_date)
-
-    origin = await resolve_trip_origin(preferences)
-
-    await add_itinerary_schedule(
-        trip,
-        origin=origin,
+    logger.info(
+        "Itinerary optimization: %d activities before, %d after",
+        sum(len(day.activities) for day in trip.days),
+        sum(len(day.activities) for day in enriched.days),
     )
 
+    return {
+        "base_trip": trip.model_dump(mode="json"),
+        "trip": enriched.model_dump(mode="json"),
+    }
+
+
+async def try_schedule_trip(
+    trip_data: dict,
+    preferences: TravelPreferences,
+) -> TravelItinerary:
+    """Schedule one itinerary candidate."""
+    trip = TravelItinerary.model_validate(trip_data)
+    selected_start_time = "09:00"
+
+    add_itinerary_dates(trip, preferences.start_date)
+    origin = await resolve_trip_origin(preferences)
+
+    await add_itinerary_schedule(trip, start_time=selected_start_time, origin=origin)
     await validate_itinerary_opening_hours(trip)
 
     trip = await repair_opening_hours_conflicts(
-        trip,
-        origin=origin,
+        trip, origin=origin, start_time=selected_start_time
     )
 
-    # Some attractions close too early for a 09:00 departure. Try an
-    # earlier day start before accepting a schedule with known conflicts.
-    if count_opening_hours_conflicts(trip):
-        earlier = TravelItinerary.model_validate(state["trip"])
+    if count_opening_hours_conflicts(trip) or count_timing_conflicts(trip):
+        earlier = TravelItinerary.model_validate(trip_data)
         add_itinerary_dates(earlier, preferences.start_date)
+
         await add_itinerary_schedule(earlier, start_time="08:00", origin=origin)
         await validate_itinerary_opening_hours(earlier)
-        earlier = await repair_opening_hours_conflicts(earlier, origin=origin)
-        if count_opening_hours_conflicts(earlier) < count_opening_hours_conflicts(trip):
+
+        earlier = await repair_opening_hours_conflicts(
+            earlier, origin=origin, start_time="08:00"
+        )
+
+        if count_opening_hours_conflicts(earlier) + count_timing_conflicts(
+            earlier
+        ) < count_opening_hours_conflicts(trip) + count_timing_conflicts(trip):
             trip = earlier
+            selected_start_time = "08:00"
 
-    remaining_conflicts = [
-        f"Day {day.day}: {activity.name}"
-        for day in trip.days
-        for activity in day.activities
-        if activity.opening_hours_status == "conflict"
-    ]
-
-    if remaining_conflicts:
-        raise ValueError(
-            "Could not create an itinerary without opening-hours "
-            "conflicts: " + "; ".join(remaining_conflicts)
+    if count_opening_hours_conflicts(trip) or count_timing_conflicts(trip):
+        trip = await remove_unschedulable_activities(
+            trip, origin=origin, start_time=selected_start_time
         )
 
-    timing_conflicts = [
-        f"Day {day.day}: {activity.name}"
-        for day in trip.days
-        for activity in day.activities
-        if activity.timing_status == "conflict"
-    ]
-
-    if timing_conflicts:
-        raise ValueError(
-            "Could not schedule activities within their experience windows: "
-            + "; ".join(timing_conflicts)
+    if any(not day.activities for day in trip.days):
+        trip = await fill_empty_days(
+            trip, origin=origin, start_time=selected_start_time
         )
 
-    return {"trip": trip.model_dump(mode="json")}
+    if any(not day.activities for day in trip.days):
+        raise ValueError("The itinerary contains empty days.")
+
+    if count_opening_hours_conflicts(trip) or count_timing_conflicts(trip):
+        raise ValueError("Unresolved scheduling conflicts.")
+
+    driving_issues = find_driving_issues(trip)
+
+    if driving_issues:
+        raise ValueError(
+            "The itinerary exceeds driving limits: " + "; ".join(driving_issues)
+        )
+
+    total_driving_issues = find_total_driving_issues(trip)
+
+    if total_driving_issues:
+        logger.warning(
+            "Itinerary exceeds recommended round-trip driving time: %s",
+            total_driving_issues,
+        )
+
+    return trip
+
+
+async def schedule_node(state: TravelState) -> dict:
+    """Try the optimized itinerary, then fall back to the base itinerary."""
+    preferences = state["preferences"]
+
+    for label, trip_data in (
+        ("optimized", state["trip"]),
+        ("base", state.get("base_trip")),
+    ):
+        if trip_data is None:
+            continue
+
+        try:
+            trip = await try_schedule_trip(trip_data, preferences)
+
+            logger.info("Successfully scheduled %s itinerary", label)
+            return {"trip": trip.model_dump(mode="json")}
+
+        except ValueError as exc:
+            logger.warning("Scheduling %s itinerary failed: %s", label, exc)
+
+    raise ValueError("Could not schedule either itinerary.")
 
 
 async def repair_node(state: TravelState) -> dict:

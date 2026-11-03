@@ -41,7 +41,7 @@ def make_trip():
 async def test_repair_swaps_activities_when_conflicts_improve(monkeypatch):
     trip = make_trip()
 
-    async def mock_schedule(candidate, origin=None):
+    async def mock_schedule(candidate, start_time="09:00", origin=None):
         return candidate
 
     async def mock_validation(candidate):
@@ -93,7 +93,7 @@ async def test_repair_swaps_activities_when_conflicts_improve(monkeypatch):
 async def test_repair_rejects_swap_with_excessive_driving(monkeypatch):
     trip = make_trip()
 
-    async def mock_schedule(candidate, origin=None):
+    async def mock_schedule(candidate, start_time="09:00", origin=None):
         return candidate
 
     async def mock_validation(candidate):
@@ -134,3 +134,60 @@ async def test_repair_rejects_swap_with_excessive_driving(monkeypatch):
         "Activity 2",
     ]
     assert schedule_repair.count_opening_hours_conflicts(result) == 1
+
+
+@pytest.mark.anyio
+async def test_removes_unschedulable_activity(monkeypatch):
+    trip = make_trip()
+    for activity in trip.days[0].activities:
+        activity.opening_hours_status = "verified"
+        activity.timing_status = "estimated"
+
+    trip.days[0].activities[0].timing_status = "conflict"
+
+    async def mock_schedule(candidate, start_time="09:00", origin=None):
+        for day in candidate.days:
+            for activity in day.activities:
+                activity.timing_status = "estimated"
+        return candidate
+
+    monkeypatch.setattr(
+        schedule_repair,
+        "add_itinerary_schedule",
+        mock_schedule,
+    )
+    monkeypatch.setattr(
+        schedule_repair,
+        "validate_itinerary_opening_hours",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        schedule_repair,
+        "add_driving_routes",
+        AsyncMock(return_value=None),
+    )
+
+    result = await schedule_repair.remove_unschedulable_activities(trip)
+
+    assert len(result.days[0].activities) == 1
+    assert result.days[0].activities[0].name == trip.days[0].activities[1].name
+    assert schedule_repair.count_timing_conflicts(result) == 0
+
+
+@pytest.mark.anyio
+async def test_keeps_activities_when_no_schedule_conflicts(monkeypatch):
+    trip = make_trip()
+
+    for activity in trip.days[0].activities:
+        activity.opening_hours_status = "verified"
+        activity.timing_status = "estimated"
+
+    monkeypatch.setattr(
+        schedule_repair,
+        "add_driving_routes",
+        AsyncMock(return_value=None),
+    )
+
+    result = await schedule_repair.remove_unschedulable_activities(trip)
+
+    assert len(result.days[0].activities) == len(trip.days[0].activities)
