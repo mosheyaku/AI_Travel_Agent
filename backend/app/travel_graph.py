@@ -5,7 +5,7 @@ from typing import Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from app.recommendations import recommend_attractions
+from app.recommendations import recommend_attractions, merge_recommendation_results
 from app.schemas import TravelItinerary, TravelPreferences
 from app.trip_generator import (
     MAX_GENERATION_ATTEMPTS,
@@ -52,17 +52,9 @@ class TravelState(TypedDict, total=False):
     base_trip: dict
 
 
-async def recommend_node(state: TravelState) -> dict:
-    """Search for and verify attractions."""
-    preferences = state["preferences"]
-
-    result = await recommend_attractions(
-        build_attraction_queries(preferences),
-        destination=preferences.destination,
-        max_attractions=get_attraction_search_limit(preferences),
-    )
-
-    recommendations = [
+def get_verified_attractions(result: dict) -> list[dict]:
+    """Return recommendations with verified physical locations."""
+    return [
         item
         for item in result["recommendations"]
         if item.get("location_status") == LocationStatus.VERIFIED
@@ -71,11 +63,114 @@ async def recommend_node(state: TravelState) -> dict:
         and item.get("google_place_id")
     ]
 
+
+def get_missing_interests(
+    preferences: TravelPreferences,
+    recommendations: list[dict],
+) -> list[str]:
+    """Find requested interests without verified recommendations."""
+    covered = {item["category"] for item in recommendations if item.get("category")}
+
+    return [
+        interest
+        for interest in dict.fromkeys(preferences.interests)
+        if interest not in covered
+    ]
+
+
+def needs_additional_search(
+    preferences: TravelPreferences,
+    recommendations: list[dict],
+) -> bool:
+    """Determine whether attraction coverage needs expansion."""
+    minimum_attractions = min(
+        preferences.duration_days * 2,
+        get_attraction_search_limit(preferences),
+    )
+
+    return len(recommendations) < minimum_attractions or bool(
+        get_missing_interests(preferences, recommendations)
+    )
+
+
+async def recommend_node(state: TravelState) -> dict:
+    """Discover verified attractions and expand insufficient coverage."""
+    preferences = state["preferences"]
+    search_limit = get_attraction_search_limit(preferences)
+
+    result = await recommend_attractions(
+        build_attraction_queries(preferences),
+        destination=preferences.destination,
+        max_attractions=search_limit,
+    )
+
+    recommendations = get_verified_attractions(result)
+
     logger.info(
-        "Attraction discovery: %d total recommendations, %d verified",
+        "Initial attraction discovery: %d candidates, %d verified",
         len(result["recommendations"]),
         len(recommendations),
     )
+
+    if needs_additional_search(preferences, recommendations):
+        missing_interests = get_missing_interests(
+            preferences,
+            recommendations,
+        )
+
+        if missing_interests:
+            additional_queries = [
+                (
+                    f"Specific named {interest} attractions and activities "
+                    f"in {preferences.destination}, including lesser-known places"
+                )
+                for interest in missing_interests
+            ]
+        else:
+            additional_queries = [
+                (
+                    f"Unique named attractions and activities in "
+                    f"{preferences.destination} beyond the most popular sites"
+                )
+            ]
+
+        try:
+            additional_result = await recommend_attractions(
+                additional_queries,
+                destination=preferences.destination,
+                max_attractions=search_limit,
+            )
+
+            additional_result = {
+                **additional_result,
+                "recommendations": get_verified_attractions(additional_result),
+            }
+
+            result = merge_recommendation_results(
+                {
+                    **result,
+                    "recommendations": recommendations,
+                },
+                additional_result,
+            )
+
+            recommendations = get_verified_attractions(result)
+
+            logger.info(
+                "Expanded attraction discovery: %d verified attractions",
+                len(recommendations),
+            )
+
+        except (ValueError, TimeoutError) as exc:
+            if not recommendations:
+                raise
+
+            logger.warning(
+                "Additional attraction search failed; preserving "
+                "%d verified attractions: %s",
+                len(recommendations),
+                exc,
+            )
 
     if not recommendations:
         raise ValueError("No attractions with verified locations are available.")

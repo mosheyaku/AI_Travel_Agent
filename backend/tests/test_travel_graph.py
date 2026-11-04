@@ -217,7 +217,7 @@ async def test_graph_rejects_unverified_attractions(
     ):
         await travel_graph.travel_graph.ainvoke({"preferences": preferences})
 
-    mock_recommend.assert_awaited_once()
+    assert mock_recommend.await_count == 2
 
 
 @pytest.mark.anyio
@@ -842,3 +842,183 @@ async def test_rebuild_schedule_does_not_reject_unrelated_driving_issues(
     )
 
     assert result is not None
+
+
+def test_additional_search_required_for_insufficient_coverage():
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=3,
+        interests=["adventure", "nature"],
+    )
+
+    recommendations = [
+        {
+            "name": "Sticky Waterfall",
+            "category": "nature",
+        }
+    ]
+
+    assert travel_graph.needs_additional_search(
+        preferences,
+        recommendations,
+    )
+
+    assert travel_graph.get_missing_interests(
+        preferences,
+        recommendations,
+    ) == ["adventure"]
+
+
+def test_additional_search_not_required_when_coverage_is_sufficient():
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=2,
+        interests=["adventure", "nature"],
+    )
+
+    recommendations = [
+        {"name": "Zipline A", "category": "adventure"},
+        {"name": "Rafting B", "category": "adventure"},
+        {"name": "Waterfall C", "category": "nature"},
+        {"name": "National Park D", "category": "nature"},
+    ]
+
+    assert not travel_graph.needs_additional_search(
+        preferences,
+        recommendations,
+    )
+
+
+@pytest.mark.anyio
+async def test_recommend_node_expands_verified_attractions(
+    monkeypatch,
+):
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=2,
+        interests=["nature", "adventure"],
+    )
+
+    initial_result = {
+        "sources": [
+            {
+                "title": "Nature Guide",
+                "url": "https://example.com/nature",
+            }
+        ],
+        "recommendations": [
+            {
+                "name": "Sticky Waterfall",
+                "category": "nature",
+                "activity_type": "waterfall",
+                "location_status": LocationStatus.VERIFIED,
+                "latitude": 19.1,
+                "longitude": 99.0,
+                "google_place_id": "place_nature",
+                "source_indices": [1],
+            }
+        ],
+    }
+
+    additional_result = {
+        "sources": [
+            {
+                "title": "Adventure Guide",
+                "url": "https://example.com/adventure",
+            }
+        ],
+        "recommendations": [
+            {
+                "name": "Zipline Adventure",
+                "category": "adventure",
+                "activity_type": "zipline",
+                "location_status": LocationStatus.VERIFIED,
+                "latitude": 18.8,
+                "longitude": 98.9,
+                "google_place_id": "place_adventure",
+                "source_indices": [1],
+            }
+        ],
+    }
+
+    mock_recommend = AsyncMock(side_effect=[initial_result, additional_result])
+
+    monkeypatch.setattr(
+        travel_graph,
+        "recommend_attractions",
+        mock_recommend,
+    )
+
+    result = await travel_graph.recommend_node({"preferences": preferences})
+
+    assert mock_recommend.await_count == 2
+
+    assert len(result["recommendations"]) == 2
+    assert len(result["sources"]) == 2
+
+    assert [item["name"] for item in result["recommendations"]] == [
+        "Sticky Waterfall",
+        "Zipline Adventure",
+    ]
+
+    assert result["recommendations"][0]["source_indices"] == [1]
+    assert result["recommendations"][1]["source_indices"] == [2]
+
+    additional_queries = mock_recommend.await_args_list[1].args[0]
+
+    assert len(additional_queries) == 1
+    assert "adventure" in additional_queries[0]
+
+
+@pytest.mark.anyio
+async def test_recommend_node_preserves_verified_attractions_when_expansion_fails(
+    monkeypatch,
+):
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=2,
+        interests=["nature", "adventure"],
+    )
+
+    initial_result = {
+        "sources": [
+            {
+                "title": "Nature Guide",
+                "url": "https://example.com/nature",
+            }
+        ],
+        "recommendations": [
+            {
+                "name": "Sticky Waterfall",
+                "category": "nature",
+                "activity_type": "waterfall",
+                "location_status": LocationStatus.VERIFIED,
+                "latitude": 19.1,
+                "longitude": 99.0,
+                "google_place_id": "place_nature",
+                "source_indices": [1],
+            }
+        ],
+    }
+
+    mock_recommend = AsyncMock(
+        side_effect=[
+            initial_result,
+            TimeoutError("Search timed out"),
+        ]
+    )
+
+    monkeypatch.setattr(
+        travel_graph,
+        "recommend_attractions",
+        mock_recommend,
+    )
+
+    result = await travel_graph.recommend_node({"preferences": preferences})
+
+    assert mock_recommend.await_count == 2
+
+    assert len(result["recommendations"]) == 1
+    assert result["recommendations"][0]["name"] == "Sticky Waterfall"
+    assert result["recommendations"][0]["source_indices"] == [1]
+    assert len(result["sources"]) == 1
