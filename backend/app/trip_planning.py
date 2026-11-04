@@ -15,14 +15,34 @@ def build_attraction_query(preferences: TravelPreferences) -> str:
     interests = ", ".join(preferences.interests)
 
     return (
-        f"Best {interests} attractions and activities "
-        f"in {preferences.destination}"
+        f"Best {interests} attractions and activities " f"in {preferences.destination}"
     )
 
 
 def build_attraction_queries(preferences: TravelPreferences) -> list[str]:
-    """Build a separate attraction search query for each interest."""
-    return [
-        f"Best {interest} attractions and activities in {preferences.destination}"
-        for interest in preferences.interests
-    ]
+    """Build diverse attraction searches for the selected interests."""
+    destination = preferences.destination
+
+    activity_focus = {
+        "adventure": "zipline rafting ATV climbing outdoor adventure",
+        "nature": "waterfalls caves hiking national parks scenic trails",
+        "culture": "temples historic sites local villages cultural experiences",
+        "food": "cooking classes food markets local food experiences",
+        "wildlife": "ethical wildlife sanctuaries safari birdwatching",
+        "relaxation": "hot springs spas wellness peaceful nature",
+        "other": "unique unusual attractions hidden gems local experiences",
+    }
+
+    queries = []
+
+    for interest in dict.fromkeys(preferences.interests):
+        queries.append(f"Best {interest} attractions and activities in {destination}")
+
+        focus = activity_focus.get(interest)
+
+        if focus:
+            queries.append(
+                f"Specific named places and operators for " f"{focus} in {destination}"
+            )
+
+    return queries

@@ -479,3 +479,136 @@ def test_experience_slot_rejects_insufficient_time():
     )
 
     assert result is None
+
+
+@pytest.mark.anyio
+async def test_two_activities_fit_same_weekday(monkeypatch):
+    trip = make_trip(["short", "short"])
+    trip.days[0].date = date(2026, 12, 15)
+
+    first, second = trip.days[0].activities
+
+    set_verified_location(first, "place-1", 18.79, 98.98)
+    set_verified_location(second, "place-2", 18.85, 99.02)
+
+    async def mock_opening_hours(place_id):
+        return SimpleNamespace(
+            periods=[
+                OpeningHoursPeriod.model_validate(
+                    {
+                        "open": {"day": 2, "hour": 9},
+                        "close": {"day": 2, "hour": 17},
+                    }
+                )
+            ]
+        )
+
+    monkeypatch.setattr(
+        itinerary_schedule,
+        "get_place_opening_hours",
+        mock_opening_hours,
+    )
+
+    monkeypatch.setattr(
+        itinerary_schedule,
+        "get_driving_route",
+        AsyncMock(return_value=SimpleNamespace(duration_minutes=30)),
+    )
+
+    result = await itinerary_schedule.add_itinerary_schedule(trip)
+
+    first, second = result.days[0].activities
+
+    assert first.start_time == "09:00"
+    assert first.end_time == "10:30"
+    assert second.start_time == "11:00"
+    assert second.end_time == "12:30"
+
+    assert first.timing_status == "estimated"
+    assert second.timing_status == "estimated"
+
+
+@pytest.mark.anyio
+async def test_rejects_activities_open_on_different_weekdays(monkeypatch):
+    trip = make_trip(["short", "short"])
+    trip.days[0].date = date(2026, 12, 15)
+
+    first, second = trip.days[0].activities
+
+    set_verified_location(first, "place-1", 18.79, 98.98)
+    set_verified_location(second, "place-2", 18.85, 99.02)
+
+    async def mock_opening_hours(place_id):
+        opening_day = 2 if place_id == "place-1" else 3
+
+        return SimpleNamespace(
+            periods=[
+                OpeningHoursPeriod.model_validate(
+                    {
+                        "open": {"day": opening_day, "hour": 9},
+                        "close": {"day": opening_day, "hour": 17},
+                    }
+                )
+            ]
+        )
+
+    monkeypatch.setattr(
+        itinerary_schedule,
+        "get_place_opening_hours",
+        mock_opening_hours,
+    )
+
+    monkeypatch.setattr(
+        itinerary_schedule,
+        "get_driving_route",
+        AsyncMock(return_value=SimpleNamespace(duration_minutes=30)),
+    )
+
+    result = await itinerary_schedule.add_itinerary_schedule(trip)
+
+    first, second = result.days[0].activities
+
+    assert first.start_time == "09:00"
+    assert first.end_time == "10:30"
+
+    assert second.start_time is None
+    assert second.end_time is None
+    assert second.timing_status == "conflict"
+    assert second.schedule_status == "unknown"
+
+
+@pytest.mark.anyio
+async def test_rejects_activity_longer_than_opening_window(monkeypatch):
+    trip = make_trip(["half_day"])
+    trip.days[0].date = date(2026, 12, 15)
+
+    activity = trip.days[0].activities[0]
+
+    set_verified_location(activity, "place-1", 18.79, 98.98)
+
+    monkeypatch.setattr(
+        itinerary_schedule,
+        "get_place_opening_hours",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                periods=[
+                    OpeningHoursPeriod.model_validate(
+                        {
+                            "open": {"day": 2, "hour": 9},
+                            "close": {"day": 2, "hour": 12},
+                        }
+                    )
+                ]
+            )
+        ),
+    )
+
+    result = await itinerary_schedule.add_itinerary_schedule(trip)
+
+    activity = result.days[0].activities[0]
+
+    assert activity.start_time is None
+    assert activity.end_time is None
+    assert activity.estimated_duration_minutes == 240
+    assert activity.timing_status == "conflict"
+    assert activity.schedule_status == "unknown"

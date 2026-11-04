@@ -5,7 +5,7 @@ from typing import Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from app.recommendations import recommend_attractions
+from app.recommendations import recommend_attractions, merge_recommendation_results
 from app.schemas import TravelItinerary, TravelPreferences
 from app.trip_generator import (
     MAX_GENERATION_ATTEMPTS,
@@ -36,6 +36,7 @@ from app.schedule_repair import (
     count_timing_conflicts,
     fill_empty_days,
 )
+from datetime import date, timedelta
 
 
 class TravelState(TypedDict, total=False):
@@ -52,17 +53,9 @@ class TravelState(TypedDict, total=False):
     base_trip: dict
 
 
-async def recommend_node(state: TravelState) -> dict:
-    """Search for and verify attractions."""
-    preferences = state["preferences"]
-
-    result = await recommend_attractions(
-        build_attraction_queries(preferences),
-        destination=preferences.destination,
-        max_attractions=get_attraction_search_limit(preferences),
-    )
-
-    recommendations = [
+def get_verified_attractions(result: dict) -> list[dict]:
+    """Return recommendations with verified physical locations."""
+    return [
         item
         for item in result["recommendations"]
         if item.get("location_status") == LocationStatus.VERIFIED
@@ -71,11 +64,114 @@ async def recommend_node(state: TravelState) -> dict:
         and item.get("google_place_id")
     ]
 
+
+def get_missing_interests(
+    preferences: TravelPreferences,
+    recommendations: list[dict],
+) -> list[str]:
+    """Find requested interests without verified recommendations."""
+    covered = {item["category"] for item in recommendations if item.get("category")}
+
+    return [
+        interest
+        for interest in dict.fromkeys(preferences.interests)
+        if interest not in covered
+    ]
+
+
+def needs_additional_search(
+    preferences: TravelPreferences,
+    recommendations: list[dict],
+) -> bool:
+    """Determine whether attraction coverage needs expansion."""
+    minimum_attractions = min(
+        preferences.duration_days * 2,
+        get_attraction_search_limit(preferences),
+    )
+
+    return len(recommendations) < minimum_attractions or bool(
+        get_missing_interests(preferences, recommendations)
+    )
+
+
+async def recommend_node(state: TravelState) -> dict:
+    """Discover verified attractions and expand insufficient coverage."""
+    preferences = state["preferences"]
+    search_limit = get_attraction_search_limit(preferences)
+
+    result = await recommend_attractions(
+        build_attraction_queries(preferences),
+        destination=preferences.destination,
+        max_attractions=search_limit,
+    )
+
+    recommendations = get_verified_attractions(result)
+
     logger.info(
-        "Attraction discovery: %d total recommendations, %d verified",
+        "Initial attraction discovery: %d candidates, %d verified",
         len(result["recommendations"]),
         len(recommendations),
     )
+
+    if needs_additional_search(preferences, recommendations):
+        missing_interests = get_missing_interests(
+            preferences,
+            recommendations,
+        )
+
+        if missing_interests:
+            additional_queries = [
+                (
+                    f"Specific named {interest} attractions and activities "
+                    f"in {preferences.destination}, including lesser-known places"
+                )
+                for interest in missing_interests
+            ]
+        else:
+            additional_queries = [
+                (
+                    f"Unique named attractions and activities in "
+                    f"{preferences.destination} beyond the most popular sites"
+                )
+            ]
+
+        try:
+            additional_result = await recommend_attractions(
+                additional_queries,
+                destination=preferences.destination,
+                max_attractions=search_limit,
+            )
+
+            additional_result = {
+                **additional_result,
+                "recommendations": get_verified_attractions(additional_result),
+            }
+
+            result = merge_recommendation_results(
+                {
+                    **result,
+                    "recommendations": recommendations,
+                },
+                additional_result,
+            )
+
+            recommendations = get_verified_attractions(result)
+
+            logger.info(
+                "Expanded attraction discovery: %d verified attractions",
+                len(recommendations),
+            )
+
+        except (ValueError, TimeoutError) as exc:
+            if not recommendations:
+                raise
+
+            logger.warning(
+                "Additional attraction search failed; preserving "
+                "%d verified attractions: %s",
+                len(recommendations),
+                exc,
+            )
 
     if not recommendations:
         raise ValueError("No attractions with verified locations are available.")
@@ -192,14 +288,25 @@ def append_feedback_node(state: TravelState) -> dict:
 
 
 async def optimize_node(state: TravelState) -> dict:
-    """Enrich a validated itinerary before scheduling."""
+    """Enrich a validated itinerary while preserving the base candidate."""
     trip = TravelItinerary.model_validate(state["trip"])
+    base_trip = trip.model_dump(mode="json")
 
-    enriched = await enrich_trip_plan(
-        trip,
-        state["preferences"],
-        state["recommendations"],
-    )
+    try:
+        enriched = await enrich_trip_plan(
+            trip.model_copy(deep=True),
+            state["preferences"],
+            state["recommendations"],
+        )
+    except ValueError as exc:
+        logger.warning(
+            "Itinerary enrichment failed; using base candidate: %s",
+            exc,
+        )
+        return {
+            "base_trip": base_trip,
+            "trip": base_trip,
+        }
 
     logger.info(
         "Itinerary optimization: %d activities before, %d after",
@@ -208,17 +315,21 @@ async def optimize_node(state: TravelState) -> dict:
     )
 
     return {
-        "base_trip": trip.model_dump(mode="json"),
+        "base_trip": base_trip,
         "trip": enriched.model_dump(mode="json"),
     }
 
 
-async def try_schedule_trip(
+async def _try_schedule_trip_for_date(
     trip_data: dict,
     preferences: TravelPreferences,
 ) -> TravelItinerary:
     """Schedule one itinerary candidate."""
     trip = TravelItinerary.model_validate(trip_data)
+    logger.info(
+        "Initial itinerary activity counts: %s",
+        [len(day.activities) for day in trip.days],
+    )
     selected_start_time = "09:00"
 
     add_itinerary_dates(trip, preferences.start_date)
@@ -252,14 +363,33 @@ async def try_schedule_trip(
         trip = await remove_unschedulable_activities(
             trip, origin=origin, start_time=selected_start_time
         )
-
-    if any(not day.activities for day in trip.days):
-        trip = await fill_empty_days(
-            trip, origin=origin, start_time=selected_start_time
+        logger.info(
+            "Activity counts after schedule repair: %s",
+            [len(day.activities) for day in trip.days],
         )
 
     if any(not day.activities for day in trip.days):
         raise ValueError("The itinerary contains empty days.")
+
+    if count_opening_hours_conflicts(trip) or count_timing_conflicts(trip):
+        raise ValueError("Unresolved scheduling conflicts.")
+
+    unscheduled_activities = [
+        activity.name
+        for day in trip.days
+        for activity in day.activities
+        if (
+            activity.start_time is None
+            or activity.end_time is None
+            or activity.schedule_status == "unknown"
+        )
+    ]
+
+    if unscheduled_activities:
+        raise ValueError(
+            "The itinerary contains unscheduled activities: "
+            + ", ".join(unscheduled_activities)
+        )
 
     if count_opening_hours_conflicts(trip) or count_timing_conflicts(trip):
         raise ValueError("Unresolved scheduling conflicts.")
@@ -279,7 +409,58 @@ async def try_schedule_trip(
             total_driving_issues,
         )
 
+    logger.info(
+        "Final itinerary activity counts: %s",
+        [len(day.activities) for day in trip.days],
+    )
+
     return trip
+
+
+async def try_schedule_trip(
+    trip_data: dict,
+    preferences: TravelPreferences,
+) -> TravelItinerary:
+    """Schedule an itinerary using consecutive weekdays."""
+    if preferences.start_date is not None:
+        return await _try_schedule_trip_for_date(
+            trip_data,
+            preferences,
+        )
+
+    reference_sunday = date(2026, 11, 1)
+    errors = []
+
+    for offset in range(7):
+        reference_start_date = reference_sunday + timedelta(days=offset)
+
+        candidate_preferences = preferences.model_copy(
+            update={"start_date": reference_start_date}
+        )
+
+        try:
+            trip = await _try_schedule_trip_for_date(
+                trip_data,
+                candidate_preferences,
+            )
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
+
+        for day in trip.days:
+            day.date = None
+
+            for activity in day.activities:
+                if activity.opening_hours_status == "verified":
+                    activity.opening_hours_status = "unknown"
+
+        return trip
+
+    raise ValueError(
+        "Could not schedule the itinerary for any consecutive weekday "
+        "combination. Last error: "
+        + (errors[-1] if errors else "Unknown scheduling error.")
+    )
 
 
 async def schedule_node(state: TravelState) -> dict:

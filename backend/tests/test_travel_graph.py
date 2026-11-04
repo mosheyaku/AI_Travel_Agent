@@ -6,6 +6,9 @@ from app import travel_graph
 from app.location_validation import LocationStatus
 from app.schemas import TravelItinerary, TravelPreferences
 from app import schedule_repair
+from app import travel_graph
+from app.schemas import TravelItinerary, TravelPreferences
+from datetime import date, timedelta
 
 
 @pytest.fixture
@@ -217,7 +220,7 @@ async def test_graph_rejects_unverified_attractions(
     ):
         await travel_graph.travel_graph.ainvoke({"preferences": preferences})
 
-    mock_recommend.assert_awaited_once()
+    assert mock_recommend.await_count == 2
 
 
 @pytest.mark.anyio
@@ -307,6 +310,13 @@ async def test_graph_schedule_returns_repaired_activity_order(monkeypatch):
         start_time="09:00",
         origin=None,
     ):
+        for index, activity in enumerate(candidate.days[0].activities):
+            hour = 9 + index
+            activity.start_time = f"{hour:02d}:00"
+            activity.end_time = f"{hour + 1:02d}:00"
+            activity.schedule_status = "estimated"
+            activity.timing_status = "estimated"
+
         return candidate
 
     async def mock_validation(candidate):
@@ -436,9 +446,6 @@ async def test_graph_rejects_unresolved_opening_hours_conflicts(
 
 @pytest.mark.anyio
 async def test_optimize_node_enriches_trip(monkeypatch):
-    from app import travel_graph
-    from app.schemas import TravelItinerary, TravelPreferences
-
     preferences = TravelPreferences(
         destination="Chiang Mai",
         duration_days=1,
@@ -484,6 +491,37 @@ async def test_optimize_node_enriches_trip(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_optimize_node_preserves_base_trip_when_enrichment_fails(
+    monkeypatch,
+    preferences,
+):
+    trip = make_trip()
+    original = trip.model_dump(mode="json")
+
+    async def fake_enrich(candidate, received_preferences, recommendations):
+        candidate.days[0].activities.clear()
+        raise ValueError("Enrichment failed")
+
+    monkeypatch.setattr(
+        travel_graph,
+        "enrich_trip_plan",
+        fake_enrich,
+    )
+
+    result = await travel_graph.optimize_node(
+        {
+            "trip": original,
+            "preferences": preferences,
+            "recommendations": [],
+        }
+    )
+
+    assert result["base_trip"] == original
+    assert result["trip"] == original
+    assert len(result["trip"]["days"][0]["activities"]) == 1
+
+
+@pytest.mark.anyio
 async def test_graph_preserves_valid_activity_after_schedule_conflict(
     monkeypatch,
 ):
@@ -521,11 +559,17 @@ async def test_graph_preserves_valid_activity_after_schedule_conflict(
     ):
         for day in candidate.days:
             for activity in day.activities:
-                activity.timing_status = (
-                    "conflict"
-                    if activity.name == "Unschedulable Activity"
-                    else "estimated"
-                )
+                if activity.name == "Unschedulable Activity":
+                    activity.start_time = None
+                    activity.end_time = None
+                    activity.schedule_status = "unknown"
+                    activity.timing_status = "conflict"
+                else:
+                    activity.start_time = "09:00"
+                    activity.end_time = "10:00"
+                    activity.schedule_status = "estimated"
+                    activity.timing_status = "estimated"
+
         return candidate
 
     async def mock_validation(candidate):
@@ -708,6 +752,54 @@ async def test_schedule_rejects_empty_days(monkeypatch, preferences):
 
 
 @pytest.mark.anyio
+async def test_schedule_rejects_activities_without_schedule(
+    monkeypatch,
+    preferences,
+):
+    trip = make_trip()
+
+    async def fake_add_schedule(
+        candidate,
+        start_time="09:00",
+        origin=None,
+    ):
+        return candidate
+
+    monkeypatch.setattr(
+        travel_graph,
+        "resolve_trip_origin",
+        AsyncMock(return_value=None),
+    )
+
+    monkeypatch.setattr(
+        travel_graph,
+        "add_itinerary_schedule",
+        fake_add_schedule,
+    )
+
+    monkeypatch.setattr(
+        travel_graph,
+        "validate_itinerary_opening_hours",
+        AsyncMock(return_value=trip),
+    )
+
+    monkeypatch.setattr(
+        travel_graph,
+        "repair_opening_hours_conflicts",
+        AsyncMock(return_value=trip),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="The itinerary contains unscheduled activities",
+    ):
+        await travel_graph.try_schedule_trip(
+            trip.model_dump(mode="json"),
+            preferences,
+        )
+
+
+@pytest.mark.anyio
 async def test_rebuild_schedule_does_not_reject_unrelated_driving_issues(
     monkeypatch,
 ):
@@ -750,3 +842,358 @@ async def test_rebuild_schedule_does_not_reject_unrelated_driving_issues(
     )
 
     assert result is not None
+
+
+def test_additional_search_required_for_insufficient_coverage():
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=3,
+        interests=["adventure", "nature"],
+    )
+
+    recommendations = [
+        {
+            "name": "Sticky Waterfall",
+            "category": "nature",
+        }
+    ]
+
+    assert travel_graph.needs_additional_search(
+        preferences,
+        recommendations,
+    )
+
+    assert travel_graph.get_missing_interests(
+        preferences,
+        recommendations,
+    ) == ["adventure"]
+
+
+def test_additional_search_not_required_when_coverage_is_sufficient():
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=2,
+        interests=["adventure", "nature"],
+    )
+
+    recommendations = [
+        {"name": "Zipline A", "category": "adventure"},
+        {"name": "Rafting B", "category": "adventure"},
+        {"name": "Waterfall C", "category": "nature"},
+        {"name": "National Park D", "category": "nature"},
+    ]
+
+    assert not travel_graph.needs_additional_search(
+        preferences,
+        recommendations,
+    )
+
+
+@pytest.mark.anyio
+async def test_recommend_node_expands_verified_attractions(
+    monkeypatch,
+):
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=2,
+        interests=["nature", "adventure"],
+    )
+
+    initial_result = {
+        "sources": [
+            {
+                "title": "Nature Guide",
+                "url": "https://example.com/nature",
+            }
+        ],
+        "recommendations": [
+            {
+                "name": "Sticky Waterfall",
+                "category": "nature",
+                "activity_type": "waterfall",
+                "location_status": LocationStatus.VERIFIED,
+                "latitude": 19.1,
+                "longitude": 99.0,
+                "google_place_id": "place_nature",
+                "source_indices": [1],
+            }
+        ],
+    }
+
+    additional_result = {
+        "sources": [
+            {
+                "title": "Adventure Guide",
+                "url": "https://example.com/adventure",
+            }
+        ],
+        "recommendations": [
+            {
+                "name": "Zipline Adventure",
+                "category": "adventure",
+                "activity_type": "zipline",
+                "location_status": LocationStatus.VERIFIED,
+                "latitude": 18.8,
+                "longitude": 98.9,
+                "google_place_id": "place_adventure",
+                "source_indices": [1],
+            }
+        ],
+    }
+
+    mock_recommend = AsyncMock(side_effect=[initial_result, additional_result])
+
+    monkeypatch.setattr(
+        travel_graph,
+        "recommend_attractions",
+        mock_recommend,
+    )
+
+    result = await travel_graph.recommend_node({"preferences": preferences})
+
+    assert mock_recommend.await_count == 2
+
+    assert len(result["recommendations"]) == 2
+    assert len(result["sources"]) == 2
+
+    assert [item["name"] for item in result["recommendations"]] == [
+        "Sticky Waterfall",
+        "Zipline Adventure",
+    ]
+
+    assert result["recommendations"][0]["source_indices"] == [1]
+    assert result["recommendations"][1]["source_indices"] == [2]
+
+    additional_queries = mock_recommend.await_args_list[1].args[0]
+
+    assert len(additional_queries) == 1
+    assert "adventure" in additional_queries[0]
+
+
+@pytest.mark.anyio
+async def test_recommend_node_preserves_verified_attractions_when_expansion_fails(
+    monkeypatch,
+):
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=2,
+        interests=["nature", "adventure"],
+    )
+
+    initial_result = {
+        "sources": [
+            {
+                "title": "Nature Guide",
+                "url": "https://example.com/nature",
+            }
+        ],
+        "recommendations": [
+            {
+                "name": "Sticky Waterfall",
+                "category": "nature",
+                "activity_type": "waterfall",
+                "location_status": LocationStatus.VERIFIED,
+                "latitude": 19.1,
+                "longitude": 99.0,
+                "google_place_id": "place_nature",
+                "source_indices": [1],
+            }
+        ],
+    }
+
+    mock_recommend = AsyncMock(
+        side_effect=[
+            initial_result,
+            TimeoutError("Search timed out"),
+        ]
+    )
+
+    monkeypatch.setattr(
+        travel_graph,
+        "recommend_attractions",
+        mock_recommend,
+    )
+
+    result = await travel_graph.recommend_node({"preferences": preferences})
+
+    assert mock_recommend.await_count == 2
+
+    assert len(result["recommendations"]) == 1
+    assert result["recommendations"][0]["name"] == "Sticky Waterfall"
+    assert result["recommendations"][0]["source_indices"] == [1]
+    assert len(result["sources"]) == 1
+
+
+@pytest.mark.anyio
+async def test_schedule_without_start_date_uses_consecutive_days(monkeypatch):
+    attempted_dates = []
+
+    async def mock_schedule(trip_data, preferences):
+        attempted_dates.append(preferences.start_date)
+
+        if preferences.start_date.weekday() != 2:
+            raise ValueError("No valid schedule.")
+
+        trip = TravelItinerary.model_validate(trip_data)
+
+        for day in trip.days:
+            day.date = preferences.start_date + timedelta(days=day.day - 1)
+
+        return trip
+
+    monkeypatch.setattr(
+        travel_graph,
+        "_try_schedule_trip_for_date",
+        mock_schedule,
+    )
+
+    preferences = TravelPreferences(
+        destination="Chiang Mai",
+        duration_days=3,
+        interests=["nature"],
+    )
+
+    trip_data = {
+        "destination": "Chiang Mai",
+        "days": [
+            {"day": 1, "activities": []},
+            {"day": 2, "activities": []},
+            {"day": 3, "activities": []},
+        ],
+    }
+
+    result = await travel_graph.try_schedule_trip(trip_data, preferences)
+
+    assert len(attempted_dates) == 4
+    assert attempted_dates[-1].weekday() == 2
+    assert all(day.date is None for day in result.days)
+
+
+@pytest.mark.anyio
+async def test_schedule_with_start_date_does_not_try_other_weekdays(monkeypatch):
+    attempted_dates = []
+
+    async def mock_schedule(trip_data, preferences):
+        attempted_dates.append(preferences.start_date)
+        return TravelItinerary.model_validate(trip_data)
+
+    monkeypatch.setattr(
+        travel_graph,
+        "_try_schedule_trip_for_date",
+        mock_schedule,
+    )
+
+    start_date = date(2026, 12, 15)
+
+    preferences = TravelPreferences(
+        destination="Chiang Mai",
+        duration_days=1,
+        start_date=start_date,
+        interests=["nature"],
+    )
+
+    trip_data = {
+        "destination": "Chiang Mai",
+        "days": [{"day": 1, "activities": []}],
+    }
+
+    await travel_graph.try_schedule_trip(trip_data, preferences)
+
+    assert attempted_dates == [start_date]
+
+
+@pytest.mark.anyio
+async def test_schedule_without_date_respects_consecutive_opening_days(
+    monkeypatch,
+):
+    attempted_dates = []
+
+    async def mock_schedule(trip_data, preferences):
+        start_date = preferences.start_date
+        attempted_dates.append(start_date)
+
+        first_day = start_date.weekday()
+        second_day = (start_date + timedelta(days=1)).weekday()
+
+        # The first activity is available on Monday.
+        # The second activity is available on Tuesday.
+        if first_day != 0 or second_day != 1:
+            raise ValueError("Activities are unavailable on these weekdays.")
+
+        trip = TravelItinerary.model_validate(trip_data)
+
+        for day in trip.days:
+            day.date = start_date + timedelta(days=day.day - 1)
+
+            for activity in day.activities:
+                activity.start_time = "09:00"
+                activity.end_time = "10:30"
+                activity.schedule_status = "estimated"
+                activity.timing_status = "estimated"
+                activity.opening_hours_status = "verified"
+
+        return trip
+
+    monkeypatch.setattr(
+        travel_graph,
+        "_try_schedule_trip_for_date",
+        mock_schedule,
+    )
+
+    preferences = TravelPreferences(
+        destination="Chiang Mai",
+        duration_days=2,
+        interests=["nature"],
+    )
+
+    trip_data = {
+        "destination": "Chiang Mai",
+        "days": [
+            {
+                "day": 1,
+                "activities": [
+                    {
+                        "name": "Monday Activity",
+                        "activity_type": "nature",
+                        "description": "Available on Monday.",
+                        "source_indices": [1],
+                    }
+                ],
+            },
+            {
+                "day": 2,
+                "activities": [
+                    {
+                        "name": "Tuesday Activity",
+                        "activity_type": "nature",
+                        "description": "Available on Tuesday.",
+                        "source_indices": [1],
+                    }
+                ],
+            },
+        ],
+    }
+
+    result = await travel_graph.try_schedule_trip(
+        trip_data,
+        preferences,
+    )
+
+    assert len(attempted_dates) == 2
+    assert attempted_dates[0].weekday() == 6
+    assert attempted_dates[1].weekday() == 0
+
+    assert all(day.date is None for day in result.days)
+
+    assert all(
+        activity.opening_hours_status == "unknown"
+        for day in result.days
+        for activity in day.activities
+    )
+
+    assert all(
+        activity.start_time == "09:00"
+        and activity.end_time == "10:30"
+        for day in result.days
+        for activity in day.activities
+    )

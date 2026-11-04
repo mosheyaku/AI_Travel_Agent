@@ -13,6 +13,147 @@ from app.duration_enrichment import enrich_attraction_durations
 from app.experience_enrichment import enrich_attraction_experiences
 
 
+def merge_recommendation_results(
+    existing: dict,
+    additional: dict,
+) -> dict:
+    """Merge recommendation batches without losing valid source references."""
+    sources = [source.copy() for source in existing["sources"]]
+    recommendations = [
+        {
+            **item,
+            "source_indices": list(item["source_indices"]),
+        }
+        for item in existing["recommendations"]
+    ]
+
+    source_index_by_url = {
+        source["url"]: index for index, source in enumerate(sources, start=1)
+    }
+
+    additional_source_map = {}
+
+    for index, source in enumerate(additional["sources"], start=1):
+        url = source["url"]
+
+        if url not in source_index_by_url:
+            sources.append(source.copy())
+            source_index_by_url[url] = len(sources)
+
+        additional_source_map[index] = source_index_by_url[url]
+
+    recommendation_by_name = {
+        item["name"].strip().casefold(): item for item in recommendations
+    }
+
+    recommendation_by_place_id = {
+        item["google_place_id"]: item
+        for item in recommendations
+        if item.get("google_place_id")
+    }
+
+    for item in additional["recommendations"]:
+        mapped_indices = []
+
+        for index in item["source_indices"]:
+            mapped_index = additional_source_map.get(index)
+
+            if mapped_index is None:
+                continue
+
+            if mapped_index not in mapped_indices:
+                mapped_indices.append(mapped_index)
+
+        if not mapped_indices:
+            continue
+
+        name = item["name"].strip().casefold()
+        place_id = item.get("google_place_id")
+
+        duplicate = recommendation_by_name.get(name)
+
+        if duplicate is None and place_id:
+            duplicate = recommendation_by_place_id.get(place_id)
+
+        if duplicate is not None:
+            duplicate["source_indices"] = list(
+                dict.fromkeys(duplicate["source_indices"] + mapped_indices)
+            )
+            continue
+
+        merged_item = {
+            **item,
+            "source_indices": mapped_indices,
+        }
+
+        recommendations.append(merged_item)
+        recommendation_by_name[name] = merged_item
+
+        if place_id:
+            recommendation_by_place_id[place_id] = merged_item
+
+    return {
+        "recommendations": recommendations,
+        "sources": sources,
+    }
+
+
+def get_per_query_candidate_limit(
+    max_attractions: int,
+    query_count: int,
+) -> int:
+    """Calculate the candidate limit for each search query."""
+    if max_attractions < 1:
+        raise ValueError("max_attractions must be positive.")
+
+    if query_count < 1:
+        raise ValueError("query_count must be positive.")
+
+    candidate_budget = max_attractions * 2
+
+    return max(
+        3,
+        (candidate_budget + query_count - 1) // query_count,
+    )
+
+
+def select_diverse_attractions(
+    recommendations: list[AttractionRecommendation],
+    limit: int,
+) -> list[AttractionRecommendation]:
+    """Select attractions fairly across categories while preserving order."""
+    if limit < 1:
+        raise ValueError("limit must be positive.")
+
+    if len(recommendations) <= limit:
+        return recommendations.copy()
+
+    grouped: dict[str, list[AttractionRecommendation]] = {}
+
+    for recommendation in recommendations:
+        grouped.setdefault(recommendation.category, []).append(recommendation)
+
+    selected = []
+
+    while len(selected) < limit:
+        added = False
+
+        for category_recommendations in grouped.values():
+            if not category_recommendations:
+                continue
+
+            selected.append(category_recommendations.pop(0))
+            added = True
+
+            if len(selected) == limit:
+                break
+
+        if not added:
+            break
+
+    return selected
+
+
 async def recommend_attractions(
     query: str | list[str],
     destination: str | None = None,
@@ -27,7 +168,12 @@ async def recommend_attractions(
     if max_attractions < 1:
         raise ValueError("max_attractions must be positive.")
 
-    per_query_limit = (max_attractions + len(queries) - 1) // len(queries)
+    candidate_budget = max_attractions * 2
+
+    per_query_limit = get_per_query_candidate_limit(
+        max_attractions,
+        len(queries),
+    )
 
     search_responses = await asyncio.gather(
         *[asyncio.to_thread(search_attractions, item) for item in queries]
@@ -300,7 +446,10 @@ Return valid JSON using only these source indices.
         ]
 
     parsed = AttractionRecommendations(
-        recommendations=recommendations[:max_attractions]
+        recommendations=select_diverse_attractions(
+            recommendations,
+            max_attractions,
+        )
     )
 
     print("Recommendations schema validation passed", flush=True)

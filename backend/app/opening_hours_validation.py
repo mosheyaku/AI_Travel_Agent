@@ -54,6 +54,32 @@ def is_within_opening_hours(
     return False
 
 
+def fits_opening_hours_on_any_weekday(
+    start_time: str,
+    end_time: str,
+    periods: list[OpeningHoursPeriod],
+) -> bool:
+    """Check whether a visit fits regular hours on at least one weekday."""
+    reference_sunday = datetime(2026, 11, 1)
+
+    start = datetime.strptime(start_time, "%H:%M").time()
+    end = datetime.strptime(end_time, "%H:%M").time()
+
+    for day_offset in range(7):
+        visit_date = reference_sunday.date() + timedelta(days=day_offset)
+
+        visit_start = datetime.combine(visit_date, start)
+        visit_end = datetime.combine(visit_date, end)
+
+        if visit_end <= visit_start:
+            visit_end += timedelta(days=1)
+
+        if is_within_opening_hours(visit_start, visit_end, periods):
+            return True
+
+    return False
+
+
 def find_next_opening_slot(
     earliest_start: datetime,
     duration_minutes: int,
@@ -155,6 +181,57 @@ def find_next_valid_slot(
     return None
 
 
+def find_next_valid_slot_without_date(
+    earliest_start: datetime,
+    duration_minutes: int,
+    periods: list[OpeningHoursPeriod] | None,
+    experience_start_time: str | None,
+    experience_end_time: str | None,
+) -> datetime | None:
+    """Find a same-day slot that works on at least one weekday."""
+    if periods is None:
+        return find_next_valid_slot(
+            earliest_start,
+            duration_minutes,
+            None,
+            experience_start_time,
+            experience_end_time,
+        )
+
+    reference_sunday = datetime(2026, 11, 1)
+    best_slot = None
+
+    for day_offset in range(7):
+        candidate_date = reference_sunday + timedelta(days=day_offset)
+
+        candidate_start = datetime.combine(
+            candidate_date.date(),
+            earliest_start.time(),
+        )
+
+        slot = find_next_valid_slot(
+            candidate_start,
+            duration_minutes,
+            periods,
+            experience_start_time,
+            experience_end_time,
+        )
+
+        if slot is None:
+            continue
+
+        if best_slot is None or slot.time() < best_slot.time():
+            best_slot = slot
+
+    if best_slot is None:
+        return None
+
+    return datetime.combine(
+        earliest_start.date(),
+        best_slot.time(),
+    )
+
+
 async def validate_itinerary_opening_hours(
     trip: TravelItinerary,
 ) -> TravelItinerary:
@@ -166,14 +243,33 @@ async def validate_itinerary_opening_hours(
             activity.opening_hours_status = "unknown"
 
             if (
-                day.date is None
-                or activity.start_time is None
+                activity.start_time is None
                 or activity.end_time is None
                 or not activity.google_place_id
             ):
                 continue
 
             try:
+                place_id = activity.google_place_id
+
+                if place_id not in cache:
+                    cache[place_id] = await get_place_opening_hours(place_id)
+
+                periods = cache[place_id].periods
+
+                if periods is None:
+                    continue
+
+                if day.date is None:
+                    if not fits_opening_hours_on_any_weekday(
+                        activity.start_time,
+                        activity.end_time,
+                        periods,
+                    ):
+                        activity.opening_hours_status = "conflict"
+
+                    continue
+
                 visit_start = datetime.combine(
                     day.date,
                     datetime.strptime(activity.start_time, "%H:%M").time(),
@@ -185,16 +281,6 @@ async def validate_itinerary_opening_hours(
 
                 if visit_end <= visit_start:
                     visit_end += timedelta(days=1)
-
-                place_id = activity.google_place_id
-
-                if place_id not in cache:
-                    cache[place_id] = await get_place_opening_hours(place_id)
-
-                periods = cache[place_id].periods
-
-                if periods is None:
-                    continue
 
                 activity.opening_hours_status = (
                     "verified"
