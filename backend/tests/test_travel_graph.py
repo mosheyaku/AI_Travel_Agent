@@ -307,6 +307,13 @@ async def test_graph_schedule_returns_repaired_activity_order(monkeypatch):
         start_time="09:00",
         origin=None,
     ):
+        for index, activity in enumerate(candidate.days[0].activities):
+            hour = 9 + index
+            activity.start_time = f"{hour:02d}:00"
+            activity.end_time = f"{hour + 1:02d}:00"
+            activity.schedule_status = "estimated"
+            activity.timing_status = "estimated"
+
         return candidate
 
     async def mock_validation(candidate):
@@ -552,11 +559,17 @@ async def test_graph_preserves_valid_activity_after_schedule_conflict(
     ):
         for day in candidate.days:
             for activity in day.activities:
-                activity.timing_status = (
-                    "conflict"
-                    if activity.name == "Unschedulable Activity"
-                    else "estimated"
-                )
+                if activity.name == "Unschedulable Activity":
+                    activity.start_time = None
+                    activity.end_time = None
+                    activity.schedule_status = "unknown"
+                    activity.timing_status = "conflict"
+                else:
+                    activity.start_time = "09:00"
+                    activity.end_time = "10:00"
+                    activity.schedule_status = "estimated"
+                    activity.timing_status = "estimated"
+
         return candidate
 
     async def mock_validation(candidate):
@@ -731,6 +744,54 @@ async def test_schedule_rejects_empty_days(monkeypatch, preferences):
     with pytest.raises(
         ValueError,
         match="The itinerary contains empty days",
+    ):
+        await travel_graph.try_schedule_trip(
+            trip.model_dump(mode="json"),
+            preferences,
+        )
+
+
+@pytest.mark.anyio
+async def test_schedule_rejects_activities_without_schedule(
+    monkeypatch,
+    preferences,
+):
+    trip = make_trip()
+
+    async def fake_add_schedule(
+        candidate,
+        start_time="09:00",
+        origin=None,
+    ):
+        return candidate
+
+    monkeypatch.setattr(
+        travel_graph,
+        "resolve_trip_origin",
+        AsyncMock(return_value=None),
+    )
+
+    monkeypatch.setattr(
+        travel_graph,
+        "add_itinerary_schedule",
+        fake_add_schedule,
+    )
+
+    monkeypatch.setattr(
+        travel_graph,
+        "validate_itinerary_opening_hours",
+        AsyncMock(return_value=trip),
+    )
+
+    monkeypatch.setattr(
+        travel_graph,
+        "repair_opening_hours_conflicts",
+        AsyncMock(return_value=trip),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="The itinerary contains unscheduled activities",
     ):
         await travel_graph.try_schedule_trip(
             trip.model_dump(mode="json"),

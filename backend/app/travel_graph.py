@@ -265,12 +265,27 @@ async def try_schedule_trip(
         )
 
     if any(not day.activities for day in trip.days):
-        trip = await fill_empty_days(
-            trip, origin=origin, start_time=selected_start_time
-        )
-
-    if any(not day.activities for day in trip.days):
         raise ValueError("The itinerary contains empty days.")
+
+    if count_opening_hours_conflicts(trip) or count_timing_conflicts(trip):
+        raise ValueError("Unresolved scheduling conflicts.")
+
+    unscheduled_activities = [
+        activity.name
+        for day in trip.days
+        for activity in day.activities
+        if (
+            activity.start_time is None
+            or activity.end_time is None
+            or activity.schedule_status == "unknown"
+        )
+    ]
+
+    if unscheduled_activities:
+        raise ValueError(
+            "The itinerary contains unscheduled activities: "
+            + ", ".join(unscheduled_activities)
+        )
 
     if count_opening_hours_conflicts(trip) or count_timing_conflicts(trip):
         raise ValueError("Unresolved scheduling conflicts.")
