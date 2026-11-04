@@ -484,6 +484,37 @@ async def test_optimize_node_enriches_trip(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_optimize_node_preserves_base_trip_when_enrichment_fails(
+    monkeypatch,
+    preferences,
+):
+    trip = make_trip()
+    original = trip.model_dump(mode="json")
+
+    async def fake_enrich(candidate, received_preferences, recommendations):
+        candidate.days[0].activities.clear()
+        raise ValueError("Enrichment failed")
+
+    monkeypatch.setattr(
+        travel_graph,
+        "enrich_trip_plan",
+        fake_enrich,
+    )
+
+    result = await travel_graph.optimize_node(
+        {
+            "trip": original,
+            "preferences": preferences,
+            "recommendations": [],
+        }
+    )
+
+    assert result["base_trip"] == original
+    assert result["trip"] == original
+    assert len(result["trip"]["days"][0]["activities"]) == 1
+
+
+@pytest.mark.anyio
 async def test_graph_preserves_valid_activity_after_schedule_conflict(
     monkeypatch,
 ):

@@ -192,14 +192,25 @@ def append_feedback_node(state: TravelState) -> dict:
 
 
 async def optimize_node(state: TravelState) -> dict:
-    """Enrich a validated itinerary before scheduling."""
+    """Enrich a validated itinerary while preserving the base candidate."""
     trip = TravelItinerary.model_validate(state["trip"])
+    base_trip = trip.model_dump(mode="json")
 
-    enriched = await enrich_trip_plan(
-        trip,
-        state["preferences"],
-        state["recommendations"],
-    )
+    try:
+        enriched = await enrich_trip_plan(
+            trip.model_copy(deep=True),
+            state["preferences"],
+            state["recommendations"],
+        )
+    except ValueError as exc:
+        logger.warning(
+            "Itinerary enrichment failed; using base candidate: %s",
+            exc,
+        )
+        return {
+            "base_trip": base_trip,
+            "trip": base_trip,
+        }
 
     logger.info(
         "Itinerary optimization: %d activities before, %d after",
@@ -208,7 +219,7 @@ async def optimize_node(state: TravelState) -> dict:
     )
 
     return {
-        "base_trip": trip.model_dump(mode="json"),
+        "base_trip": base_trip,
         "trip": enriched.model_dump(mode="json"),
     }
 
