@@ -6,6 +6,9 @@ from app import travel_graph
 from app.location_validation import LocationStatus
 from app.schemas import TravelItinerary, TravelPreferences
 from app import schedule_repair
+from app import travel_graph
+from app.schemas import TravelItinerary, TravelPreferences
+from datetime import date, timedelta
 
 
 @pytest.fixture
@@ -443,9 +446,6 @@ async def test_graph_rejects_unresolved_opening_hours_conflicts(
 
 @pytest.mark.anyio
 async def test_optimize_node_enriches_trip(monkeypatch):
-    from app import travel_graph
-    from app.schemas import TravelItinerary, TravelPreferences
-
     preferences = TravelPreferences(
         destination="Chiang Mai",
         duration_days=1,
@@ -1022,3 +1022,178 @@ async def test_recommend_node_preserves_verified_attractions_when_expansion_fail
     assert result["recommendations"][0]["name"] == "Sticky Waterfall"
     assert result["recommendations"][0]["source_indices"] == [1]
     assert len(result["sources"]) == 1
+
+
+@pytest.mark.anyio
+async def test_schedule_without_start_date_uses_consecutive_days(monkeypatch):
+    attempted_dates = []
+
+    async def mock_schedule(trip_data, preferences):
+        attempted_dates.append(preferences.start_date)
+
+        if preferences.start_date.weekday() != 2:
+            raise ValueError("No valid schedule.")
+
+        trip = TravelItinerary.model_validate(trip_data)
+
+        for day in trip.days:
+            day.date = preferences.start_date + timedelta(days=day.day - 1)
+
+        return trip
+
+    monkeypatch.setattr(
+        travel_graph,
+        "_try_schedule_trip_for_date",
+        mock_schedule,
+    )
+
+    preferences = TravelPreferences(
+        destination="Chiang Mai",
+        duration_days=3,
+        interests=["nature"],
+    )
+
+    trip_data = {
+        "destination": "Chiang Mai",
+        "days": [
+            {"day": 1, "activities": []},
+            {"day": 2, "activities": []},
+            {"day": 3, "activities": []},
+        ],
+    }
+
+    result = await travel_graph.try_schedule_trip(trip_data, preferences)
+
+    assert len(attempted_dates) == 4
+    assert attempted_dates[-1].weekday() == 2
+    assert all(day.date is None for day in result.days)
+
+
+@pytest.mark.anyio
+async def test_schedule_with_start_date_does_not_try_other_weekdays(monkeypatch):
+    attempted_dates = []
+
+    async def mock_schedule(trip_data, preferences):
+        attempted_dates.append(preferences.start_date)
+        return TravelItinerary.model_validate(trip_data)
+
+    monkeypatch.setattr(
+        travel_graph,
+        "_try_schedule_trip_for_date",
+        mock_schedule,
+    )
+
+    start_date = date(2026, 12, 15)
+
+    preferences = TravelPreferences(
+        destination="Chiang Mai",
+        duration_days=1,
+        start_date=start_date,
+        interests=["nature"],
+    )
+
+    trip_data = {
+        "destination": "Chiang Mai",
+        "days": [{"day": 1, "activities": []}],
+    }
+
+    await travel_graph.try_schedule_trip(trip_data, preferences)
+
+    assert attempted_dates == [start_date]
+
+
+@pytest.mark.anyio
+async def test_schedule_without_date_respects_consecutive_opening_days(
+    monkeypatch,
+):
+    attempted_dates = []
+
+    async def mock_schedule(trip_data, preferences):
+        start_date = preferences.start_date
+        attempted_dates.append(start_date)
+
+        first_day = start_date.weekday()
+        second_day = (start_date + timedelta(days=1)).weekday()
+
+        # The first activity is available on Monday.
+        # The second activity is available on Tuesday.
+        if first_day != 0 or second_day != 1:
+            raise ValueError("Activities are unavailable on these weekdays.")
+
+        trip = TravelItinerary.model_validate(trip_data)
+
+        for day in trip.days:
+            day.date = start_date + timedelta(days=day.day - 1)
+
+            for activity in day.activities:
+                activity.start_time = "09:00"
+                activity.end_time = "10:30"
+                activity.schedule_status = "estimated"
+                activity.timing_status = "estimated"
+                activity.opening_hours_status = "verified"
+
+        return trip
+
+    monkeypatch.setattr(
+        travel_graph,
+        "_try_schedule_trip_for_date",
+        mock_schedule,
+    )
+
+    preferences = TravelPreferences(
+        destination="Chiang Mai",
+        duration_days=2,
+        interests=["nature"],
+    )
+
+    trip_data = {
+        "destination": "Chiang Mai",
+        "days": [
+            {
+                "day": 1,
+                "activities": [
+                    {
+                        "name": "Monday Activity",
+                        "activity_type": "nature",
+                        "description": "Available on Monday.",
+                        "source_indices": [1],
+                    }
+                ],
+            },
+            {
+                "day": 2,
+                "activities": [
+                    {
+                        "name": "Tuesday Activity",
+                        "activity_type": "nature",
+                        "description": "Available on Tuesday.",
+                        "source_indices": [1],
+                    }
+                ],
+            },
+        ],
+    }
+
+    result = await travel_graph.try_schedule_trip(
+        trip_data,
+        preferences,
+    )
+
+    assert len(attempted_dates) == 2
+    assert attempted_dates[0].weekday() == 6
+    assert attempted_dates[1].weekday() == 0
+
+    assert all(day.date is None for day in result.days)
+
+    assert all(
+        activity.opening_hours_status == "unknown"
+        for day in result.days
+        for activity in day.activities
+    )
+
+    assert all(
+        activity.start_time == "09:00"
+        and activity.end_time == "10:30"
+        for day in result.days
+        for activity in day.activities
+    )

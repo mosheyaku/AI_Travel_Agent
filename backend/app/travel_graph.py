@@ -36,6 +36,7 @@ from app.schedule_repair import (
     count_timing_conflicts,
     fill_empty_days,
 )
+from datetime import date, timedelta
 
 
 class TravelState(TypedDict, total=False):
@@ -319,12 +320,16 @@ async def optimize_node(state: TravelState) -> dict:
     }
 
 
-async def try_schedule_trip(
+async def _try_schedule_trip_for_date(
     trip_data: dict,
     preferences: TravelPreferences,
 ) -> TravelItinerary:
     """Schedule one itinerary candidate."""
     trip = TravelItinerary.model_validate(trip_data)
+    logger.info(
+        "Initial itinerary activity counts: %s",
+        [len(day.activities) for day in trip.days],
+    )
     selected_start_time = "09:00"
 
     add_itinerary_dates(trip, preferences.start_date)
@@ -357,6 +362,10 @@ async def try_schedule_trip(
     if count_opening_hours_conflicts(trip) or count_timing_conflicts(trip):
         trip = await remove_unschedulable_activities(
             trip, origin=origin, start_time=selected_start_time
+        )
+        logger.info(
+            "Activity counts after schedule repair: %s",
+            [len(day.activities) for day in trip.days],
         )
 
     if any(not day.activities for day in trip.days):
@@ -400,7 +409,58 @@ async def try_schedule_trip(
             total_driving_issues,
         )
 
+    logger.info(
+        "Final itinerary activity counts: %s",
+        [len(day.activities) for day in trip.days],
+    )
+
     return trip
+
+
+async def try_schedule_trip(
+    trip_data: dict,
+    preferences: TravelPreferences,
+) -> TravelItinerary:
+    """Schedule an itinerary using consecutive weekdays."""
+    if preferences.start_date is not None:
+        return await _try_schedule_trip_for_date(
+            trip_data,
+            preferences,
+        )
+
+    reference_sunday = date(2026, 11, 1)
+    errors = []
+
+    for offset in range(7):
+        reference_start_date = reference_sunday + timedelta(days=offset)
+
+        candidate_preferences = preferences.model_copy(
+            update={"start_date": reference_start_date}
+        )
+
+        try:
+            trip = await _try_schedule_trip_for_date(
+                trip_data,
+                candidate_preferences,
+            )
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
+
+        for day in trip.days:
+            day.date = None
+
+            for activity in day.activities:
+                if activity.opening_hours_status == "verified":
+                    activity.opening_hours_status = "unknown"
+
+        return trip
+
+    raise ValueError(
+        "Could not schedule the itinerary for any consecutive weekday "
+        "combination. Last error: "
+        + (errors[-1] if errors else "Unknown scheduling error.")
+    )
 
 
 async def schedule_node(state: TravelState) -> dict:
