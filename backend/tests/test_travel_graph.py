@@ -110,7 +110,7 @@ async def test_graph_generates_valid_trip(
     assert len(result["sources"]) == 1
 
     mock_generate.assert_awaited_once()
-    mock_evaluate.assert_awaited_once()
+    assert mock_evaluate.await_count == 3
 
 
 @pytest.mark.anyio
@@ -157,7 +157,15 @@ async def test_graph_repairs_invalid_trip(
     mock_recommendations,
 ):
     mock_generate = AsyncMock(return_value=make_trip())
-    mock_evaluate = AsyncMock(return_value=["Day 1: invalid route"])
+    mock_evaluate = AsyncMock(
+        side_effect=[
+            ["Day 1: invalid route"],
+            ["Day 1: invalid route"],
+            [],
+            [],
+            [],
+        ]
+    )
     mock_repair = AsyncMock(return_value=make_trip())
 
     monkeypatch.setattr(
@@ -265,15 +273,21 @@ async def test_graph_selects_best_driving_fallback(
         lambda trip: ["Excessive total driving"],
     )
 
-    result = await travel_graph.travel_graph.ainvoke(
-        {
-            "preferences": preferences,
-        }
+    monkeypatch.setattr(
+        travel_graph,
+        "repair_trip_plan",
+        AsyncMock(return_value=None),
     )
 
-    assert result["attempts"] == 2
-    assert mock_generate.await_count == 2
-    assert result["trip"]["days"][0]["total_driving_duration_minutes"] == 200
+    with pytest.raises(
+        ValueError,
+        match="could be repaired",
+    ):
+        await travel_graph.travel_graph.ainvoke(
+            {
+                "preferences": preferences,
+            }
+        )
 
 
 @pytest.mark.anyio
@@ -1192,8 +1206,7 @@ async def test_schedule_without_date_respects_consecutive_opening_days(
     )
 
     assert all(
-        activity.start_time == "09:00"
-        and activity.end_time == "10:30"
+        activity.start_time == "09:00" and activity.end_time == "10:30"
         for day in result.days
         for activity in day.activities
     )

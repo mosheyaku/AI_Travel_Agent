@@ -1,4 +1,6 @@
 import logging
+import time
+from functools import wraps
 
 logger = logging.getLogger(__name__)
 from typing import Literal, TypedDict
@@ -51,6 +53,7 @@ class TravelState(TypedDict, total=False):
     fallback: TravelItinerary | None
     last_error: str
     base_trip: dict
+    candidates: list[TravelItinerary]
 
 
 def get_verified_attractions(result: dict) -> list[dict]:
@@ -211,47 +214,37 @@ async def generate_node(state: TravelState) -> dict:
 
 
 async def evaluate_node(state: TravelState) -> dict:
-    """Evaluate the candidate and retain useful fallback plans."""
-    candidate = state["candidate"]
+    """Evaluate a candidate and retain invalid plans for possible repair."""
+    candidate = state.get("candidate")
 
     if candidate is None:
-        return {"issues": state["issues"]}
+        return {"issues": state.get("issues", [])}
 
     issues = await evaluate_trip_candidate(
         candidate,
         state["preferences"],
     )
 
-    updates = {"issues": issues}
-
     if not issues:
-        updates["trip"] = candidate.model_dump()
-        return updates
+        return {
+            "issues": [],
+            "trip": candidate.model_dump(mode="json"),
+        }
 
-    planning_issues = find_planning_issues(
-        candidate,
-        state["preferences"].pace,
+    candidates = list(state.get("candidates", []))
+    candidates.append(candidate.model_copy(deep=True))
+
+    logger.info(
+        "Itinerary attempt %d failed with %d issues: %s",
+        state["attempts"],
+        len(issues),
+        "; ".join(issues),
     )
 
-    if (
-        not planning_issues
-        and not find_driving_issues(candidate)
-        and find_total_driving_issues(candidate)
-    ):
-        previous = state.get("fallback")
-
-        score = (
-            total_driving_excess_minutes(candidate),
-            total_trip_driving_minutes(candidate),
-        )
-
-        if previous is None or score < (
-            total_driving_excess_minutes(previous),
-            total_trip_driving_minutes(previous),
-        ):
-            updates["fallback"] = candidate.model_copy(deep=True)
-
-    return updates
+    return {
+        "issues": issues,
+        "candidates": candidates,
+    }
 
 
 def decide_next(state: TravelState) -> Literal["finish", "retry", "repair"]:
@@ -288,9 +281,20 @@ def append_feedback_node(state: TravelState) -> dict:
 
 
 async def optimize_node(state: TravelState) -> dict:
-    """Enrich a validated itinerary while preserving the base candidate."""
+    """Enrich a valid itinerary without introducing planning violations."""
     trip = TravelItinerary.model_validate(state["trip"])
     base_trip = trip.model_dump(mode="json")
+
+    base_issues = await evaluate_trip_candidate(
+        trip,
+        state["preferences"],
+    )
+
+    if base_issues:
+        raise ValueError(
+            "The base itinerary violates planning constraints: "
+            + "; ".join(base_issues)
+        )
 
     try:
         enriched = await enrich_trip_plan(
@@ -298,6 +302,22 @@ async def optimize_node(state: TravelState) -> dict:
             state["preferences"],
             state["recommendations"],
         )
+
+        enriched_issues = await evaluate_trip_candidate(
+            enriched,
+            state["preferences"],
+        )
+
+        if enriched_issues:
+            logger.warning(
+                "Itinerary enrichment introduced planning issues: %s",
+                "; ".join(enriched_issues),
+            )
+            return {
+                "base_trip": base_trip,
+                "trip": trip.model_dump(mode="json"),
+            }
+
     except ValueError as exc:
         logger.warning(
             "Itinerary enrichment failed; using base candidate: %s",
@@ -305,7 +325,7 @@ async def optimize_node(state: TravelState) -> dict:
         )
         return {
             "base_trip": base_trip,
-            "trip": base_trip,
+            "trip": trip.model_dump(mode="json"),
         }
 
     logger.info(
@@ -487,50 +507,107 @@ async def schedule_node(state: TravelState) -> dict:
 
 
 async def repair_node(state: TravelState) -> dict:
-    """Repair the final candidate or return the best soft fallback."""
-    fallback = state.get("fallback")
+    """Try repairing generated candidates without accepting invalid plans."""
+    candidates = list(state.get("candidates", []))
 
-    if fallback is not None:
-        return {"trip": fallback.model_dump()}
+    if not candidates:
+        raise ValueError("No valid itinerary candidates are available for repair.")
 
-    candidate = state.get("candidate")
+    preferences = state["preferences"]
+    recommendations = state["recommendations"]
 
-    if candidate is None:
-        raise ValueError("The model returned no valid itinerary after retries.")
+    def candidate_score(candidate: TravelItinerary) -> tuple:
+        planning_issues = find_planning_issues(candidate, preferences.pace)
+        driving_issues = find_driving_issues(candidate)
+        total_driving_issues = find_total_driving_issues(candidate)
 
-    repaired = await repair_trip_plan(
-        candidate,
-        state["preferences"],
-        state["recommendations"],
+        return (
+            len(planning_issues) + len(driving_issues),
+            len(total_driving_issues),
+            total_driving_excess_minutes(candidate),
+            -sum(len(day.activities) for day in candidate.days),
+        )
+
+    candidates.sort(key=candidate_score)
+
+    for index, candidate in enumerate(candidates, start=1):
+        logger.info(
+            "Repairing itinerary candidate %d/%d",
+            index,
+            len(candidates),
+        )
+
+        repaired = await repair_trip_plan(
+            candidate,
+            preferences,
+            recommendations,
+        )
+
+        if repaired is None:
+            continue
+
+        issues = await evaluate_trip_candidate(
+            repaired,
+            preferences,
+        )
+
+        if issues:
+            logger.warning(
+                "Repaired itinerary still has issues: %s",
+                "; ".join(issues),
+            )
+            continue
+
+        return {"trip": repaired.model_dump(mode="json")}
+
+    raise ValueError(
+        "None of the generated itineraries could be repaired "
+        "within the planning constraints."
     )
 
-    if repaired is None:
-        raise ValueError(
-            "The trip plan failed route validation: "
-            + "; ".join(state.get("issues", []))
-        )
 
-    origin = await resolve_trip_origin(state["preferences"])
+def timed_node(name: str, node):
+    """Measure and log the execution time of a graph node."""
 
-    if origin is not None:
-        repaired = await add_total_driving_routes(
-            repaired,
-            origin_latitude=origin[0],
-            origin_longitude=origin[1],
-        )
+    @wraps(node)
+    async def async_wrapper(state: TravelState) -> dict:
+        start = time.perf_counter()
 
-    return {"trip": repaired.model_dump()}
+        try:
+            return await node(state)
+        finally:
+            logger.warning(
+                "PERFORMANCE | %s | %.2f seconds",
+                name,
+                time.perf_counter() - start,
+            )
+
+    def sync_wrapper(state: TravelState) -> dict:
+        start = time.perf_counter()
+
+        try:
+            return node(state)
+        finally:
+            logger.warning(
+                "PERFORMANCE | %s | %.2f seconds",
+                name,
+                time.perf_counter() - start,
+            )
+
+    import inspect
+
+    return async_wrapper if inspect.iscoroutinefunction(node) else sync_wrapper
 
 
 builder = StateGraph(TravelState)
 
-builder.add_node("recommend", recommend_node)
-builder.add_node("generate", generate_node)
-builder.add_node("evaluate", evaluate_node)
-builder.add_node("feedback", append_feedback_node)
-builder.add_node("repair", repair_node)
-builder.add_node("schedule", schedule_node)
-builder.add_node("optimize", optimize_node)
+builder.add_node("recommend", timed_node("recommend", recommend_node))
+builder.add_node("generate", timed_node("generate", generate_node))
+builder.add_node("evaluate", timed_node("evaluate", evaluate_node))
+builder.add_node("feedback", timed_node("feedback", append_feedback_node))
+builder.add_node("repair", timed_node("repair", repair_node))
+builder.add_node("schedule", timed_node("schedule", schedule_node))
+builder.add_node("optimize", timed_node("optimize", optimize_node))
 
 builder.add_edge(START, "recommend")
 builder.add_edge("recommend", "generate")
@@ -548,7 +625,6 @@ builder.add_conditional_edges(
 
 builder.add_edge("feedback", "generate")
 builder.add_edge("repair", "optimize")
-builder.add_edge("optimize", "schedule")
-builder.add_edge("schedule", END)
+builder.add_edge("optimize", END)
 
 travel_graph = builder.compile()
