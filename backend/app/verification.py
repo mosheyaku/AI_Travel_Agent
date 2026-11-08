@@ -219,15 +219,21 @@ Requirements:
   a different provider, or an unnamed tour rather than this exact place.
 - A recommendation must identify one specific physical attraction,
   trail, park, or activity provider.
-- Reject packaged tours that combine multiple independently visitable
-  attractions or locations.
-- Reject tour package titles presented as attraction names, even when
-  one of the stops is a real, identifiable place.
+- A bookable guided tour offered by a specifically identified provider
+  may be a valid visitor experience, even if it visits multiple locations.
+- Verify that the sources identify the exact named tour and its provider.
 - Do not treat a tour package and one of its stops as the same attraction.
+- Do not accept a generic collection of attractions as a tour package.
+- Do not invent a tour package by combining independently visitable places.
+- Do not attribute activities from one tour package to another.
+- Do not treat a tour stop as the departure or meeting point unless
+  the sources explicitly establish that role.
+- If the exact tour or its provider cannot be identified, return verified=false.
 - A guided activity offered by one identifiable provider is valid,
   even when it includes multiple activities at that provider's location.
-- If the recommendation name refers to a package rather than a
-  specific attraction or provider, return verified=false.
+- If the recommendation refers to a tour package, accept it only when
+  the exact package and its provider are identifiable in the sources.
+- Reject unnamed, generic, or unsupported tour packages.
 - For each claim in the description, check it against the exact attraction
   in the identified source; omit claims whose attribution is ambiguous.
 - A nearby attraction or activity does not establish that this provider offers it.

@@ -1,5 +1,8 @@
-
-from app.deduplication import deduplicate_attractions
+from app.deduplication import (
+    deduplicate_attractions,
+    deduplicate_verified_attractions,
+)
+from app.location_validation import LocationStatus
 from app.schemas import AttractionRecommendation
 
 
@@ -62,3 +65,105 @@ def test_keeps_different_attractions():
     result = deduplicate_attractions(recommendations)
 
     assert len(result) == 2
+
+
+def make_verified_attraction(
+    name: str,
+    source_index: int,
+    place_id: str = "place-123",
+    activity_type: str = "zipline",
+    booking_type: str = "scheduled_activity",
+) -> AttractionRecommendation:
+    return AttractionRecommendation(
+        name=name,
+        category="adventure",
+        activity_type=activity_type,
+        description=f"Experience at {name}.",
+        relevance_reason="Matches adventure interests.",
+        source_indices=[source_index],
+        location_status=LocationStatus.VERIFIED,
+        latitude=18.7883,
+        longitude=98.9853,
+        google_place_id=place_id,
+        booking_type=booking_type,
+    )
+
+
+def test_merges_verified_duplicate_experiences():
+    recommendations = [
+        make_verified_attraction("Kingkong Smile Zipline", 1),
+        make_verified_attraction("Chiang Mai Kingkong Smile Zipline", 2),
+    ]
+
+    result = deduplicate_verified_attractions(recommendations)
+
+    assert len(result) == 1
+    assert result[0].name == "Kingkong Smile Zipline"
+    assert result[0].source_indices == [1, 2]
+
+
+def test_keeps_different_experiences_at_same_place():
+    recommendations = [
+        make_verified_attraction(
+            "ATV Adventure",
+            1,
+            activity_type="atv",
+        ),
+        make_verified_attraction(
+            "Zipline Adventure",
+            2,
+            activity_type="zipline",
+        ),
+    ]
+
+    result = deduplicate_verified_attractions(recommendations)
+
+    assert len(result) == 2
+
+
+def test_keeps_different_booking_types_at_same_place():
+    recommendations = [
+        make_verified_attraction(
+            "Guided Nature Tour",
+            1,
+            activity_type="hiking",
+            booking_type="guided_tour",
+        ),
+        make_verified_attraction(
+            "Self-Guided Nature Walk",
+            2,
+            activity_type="hiking",
+            booking_type="self_guided",
+        ),
+    ]
+
+    result = deduplicate_verified_attractions(recommendations)
+
+    assert len(result) == 2
+
+
+def test_keeps_unverified_attractions():
+    recommendations = [
+        make_verified_attraction("Zipline A", 1),
+        make_verified_attraction("Zipline B", 2),
+    ]
+
+    for recommendation in recommendations:
+        recommendation.location_status = LocationStatus.UNVERIFIED
+
+    result = deduplicate_verified_attractions(recommendations)
+
+    assert len(result) == 2
+
+
+def test_deduplication_does_not_mutate_original_recommendations():
+    recommendations = [
+        make_verified_attraction("Kingkong Smile Zipline", 1),
+        make_verified_attraction("Chiang Mai Kingkong Smile Zipline", 2),
+    ]
+
+    result = deduplicate_verified_attractions(recommendations)
+
+    assert result[0].source_indices == [1, 2]
+    assert recommendations[0].source_indices == [1]
+    assert recommendations[1].source_indices == [2]

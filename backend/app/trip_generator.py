@@ -1,4 +1,5 @@
 import json
+import time
 
 import httpx
 from pydantic import ValidationError
@@ -15,6 +16,7 @@ from app.itinerary_distances import (
 )
 from app.itinerary_routes import (
     MAX_TOTAL_DAILY_DRIVING_MINUTES,
+    DrivingRouteCache,
     add_driving_routes,
     add_total_driving_routes,
     find_driving_issues,
@@ -134,7 +136,7 @@ def find_activity_load_issues(
     trip: TravelItinerary,
     pace: str = "balanced",
 ) -> list[str]:
-    """Find days with incompatible durations or excessive activity counts."""
+    """Find days with excessive activity counts or known durations."""
     issues = []
 
     max_activities = {
@@ -143,7 +145,19 @@ def find_activity_load_issues(
         "active": 4,
     }[pace]
 
+    max_daily_minutes = {
+        "relaxed": 360,
+        "balanced": 480,
+        "active": 600,
+    }[pace]
+
     for day in trip.days:
+        if len(day.activities) > max_activities:
+            issues.append(
+                f"Day {day.day}: {len(day.activities)} activities "
+                f"exceed the {pace} pace limit of {max_activities}."
+            )
+
         full_day_activities = [
             activity.name
             for activity in day.activities
@@ -154,9 +168,8 @@ def find_activity_load_issues(
             issues.append(
                 f"Day {day.day}: full-day activity "
                 f"({', '.join(full_day_activities)}) "
-                "is scheduled with other activities."
+                "cannot be combined with other activities."
             )
-            continue
 
         substantial_activities = [
             activity.name
@@ -170,10 +183,50 @@ def find_activity_load_issues(
                 f"activities ({', '.join(substantial_activities)})."
             )
 
-        if len(day.activities) > max_activities:
+        known_activity_minutes = sum(
+            activity.duration_minutes or 0 for activity in day.activities
+        )
+
+        if known_activity_minutes > max_daily_minutes:
             issues.append(
-                f"Day {day.day}: {len(day.activities)} activities "
-                f"exceed the {pace} pace limit of {max_activities}."
+                f"Day {day.day}: known activity durations total "
+                f"{known_activity_minutes} minutes, exceeding "
+                f"the {pace} limit of {max_daily_minutes} minutes."
+            )
+
+    return issues
+
+
+def find_daily_time_issues(
+    trip: TravelItinerary,
+    pace: str = "balanced",
+) -> list[str]:
+    """Find days whose known activities and driving exceed the daily limit."""
+    max_daily_minutes = {
+        "relaxed": 360,
+        "balanced": 480,
+        "active": 600,
+    }[pace]
+
+    issues = []
+
+    for day in trip.days:
+        driving_minutes = day.total_driving_duration_minutes
+
+        if driving_minutes is None:
+            continue
+
+        known_activity_minutes = sum(
+            activity.duration_minutes or 0 for activity in day.activities
+        )
+
+        total_minutes = known_activity_minutes + driving_minutes
+
+        if total_minutes > max_daily_minutes:
+            issues.append(
+                f"Day {day.day}: known activities and round-trip driving "
+                f"total {total_minutes} minutes, exceeding the "
+                f"{pace} daily limit of {max_daily_minutes} minutes."
             )
 
     return issues
@@ -325,17 +378,18 @@ async def repair_trip_plan(
                     updated = candidate.model_copy(deep=True)
                     activity = updated.days[source_index].activities.pop(activity_index)
                     updated.days[destination_index].activities.append(activity)
-
                     reset_route_data(updated)
                     yield updated
 
                 updated = candidate.model_copy(deep=True)
                 updated.days[source_index].activities.pop(activity_index)
-
                 reset_route_data(updated)
                 yield updated
 
     original_count = activity_count(trip)
+    origin = await resolve_trip_origin(preferences)
+    route_cache = DrivingRouteCache()
+
     queue = deque([(trip.model_copy(deep=True), 0)])
     visited = {signature(trip)}
 
@@ -343,41 +397,104 @@ async def repair_trip_plan(
     best_score = None
     evaluated = 0
 
+    repair_started = time.perf_counter()
+
+    planning_valid_count = 0
+    driving_routes_calls = 0
+    total_driving_routes_calls = 0
+
+    driving_routes_seconds = 0.0
+    total_driving_routes_seconds = 0.0
+
+    def log_repair_performance() -> None:
+        elapsed = time.perf_counter() - repair_started
+
+        print(
+            "REPAIR PERFORMANCE | "
+            f"states={evaluated} | "
+            f"planning_valid={planning_valid_count} | "
+            f"driving_calls={driving_routes_calls} | "
+            f"driving_seconds={driving_routes_seconds:.2f} | "
+            f"total_driving_calls={total_driving_routes_calls} | "
+            f"total_driving_seconds={total_driving_routes_seconds:.2f} | "
+            f"elapsed={elapsed:.2f}"
+        )
+
+        print(
+            "ROUTE CACHE | "
+            f"hits={route_cache.hits} | "
+            f"misses={route_cache.misses} | "
+            f"unique_routes={len(route_cache.routes)}"
+        )
+
     while queue and evaluated < max_states:
         candidate, depth = queue.popleft()
         evaluated += 1
 
-        if not find_planning_issues(candidate, preferences.pace):
+        planning_issues = find_planning_issues(candidate, preferences.pace)
+
+        if not planning_issues:
+            planning_valid_count += 1
             try:
-                validate_trip_plan(
-                    candidate,
-                    preferences,
-                    recommendations,
-                )
+                validate_trip_plan(candidate, preferences, recommendations)
             except ValueError:
-                continue
+                pass
+            else:
+                driving_started = time.perf_counter()
+                try:
+                    await add_driving_routes(candidate, cache=route_cache)
+                finally:
+                    driving_routes_seconds += time.perf_counter() - driving_started
+                    driving_routes_calls += 1
 
-            await add_driving_routes(candidate)
-
-            if not find_driving_issues(candidate):
-                if not any(
+                driving_valid = not find_driving_issues(candidate) and not any(
                     len(day.activities) > 1 and day.driving_status != "verified"
                     for day in candidate.days
-                ):
-                    score = (
-                        original_count - activity_count(candidate),
-                        sum(
-                            day.driving_duration_minutes or 0 for day in candidate.days
-                        ),
-                    )
+                )
 
-                    if best_score is None or score < best_score:
-                        best = candidate
-                        best_score = score
+                if driving_valid:
+                    total_driving_valid = True
+                    daily_time_valid = True
 
-                        if score == (0, 0):
-                            return best
+                    if origin is not None:
+                        total_driving_started = time.perf_counter()
+                        try:
+                            await add_total_driving_routes(
+                                candidate,
+                                origin_latitude=origin[0],
+                                origin_longitude=origin[1],
+                                cache=route_cache,
+                            )
+                        finally:
+                            total_driving_routes_seconds += (
+                                time.perf_counter() - total_driving_started
+                            )
+                            total_driving_routes_calls += 1
 
+                        total_driving_valid = not find_total_driving_issues(candidate)
+                        daily_time_valid = not find_daily_time_issues(
+                            candidate,
+                            preferences.pace,
+                        )
+
+                    if total_driving_valid and daily_time_valid:
+                        score = (
+                            original_count - activity_count(candidate),
+                            sum(
+                                day.driving_duration_minutes or 0
+                                for day in candidate.days
+                            ),
+                        )
+
+                        if best_score is None or score < best_score:
+                            best = candidate
+                            best_score = score
+
+                            if score[0] == 0:
+                                log_repair_performance()
+                                return best
+
+        # Continue exploring repairs even when the candidate is invalid.
         if depth >= max_depth:
             continue
 
@@ -390,6 +507,7 @@ async def repair_trip_plan(
             visited.add(state)
             queue.append((neighbor, depth + 1))
 
+    log_repair_performance()
     return best
 
 
@@ -476,6 +594,9 @@ async def enrich_trip_plan(
                 if find_total_driving_issues(candidate):
                     continue
 
+                if find_daily_time_issues(candidate, preferences.pace):
+                    continue
+
                 minutes = candidate.days[day_index].total_driving_duration_minutes
 
                 if minutes is None:
@@ -488,9 +609,16 @@ async def enrich_trip_plan(
 
                 minutes = minutes or 0
 
-            if minutes < best_minutes:
+            known_activity_minutes = sum(
+                activity.duration_minutes or 0
+                for activity in candidate.days[day_index].activities
+            )
+
+            total_minutes = known_activity_minutes + minutes
+
+            if total_minutes < best_minutes:
                 best_candidate = candidate
-                best_minutes = minutes
+                best_minutes = total_minutes
 
         if best_candidate is not None:
             enriched = best_candidate
@@ -548,6 +676,21 @@ Requirements:
   meaningfully different experiences.
 - Do not add repetitive activities merely to fill the requested daily pace.
 - Prefer fewer meaningful activities over a larger number of repetitive ones.
+- Treat each requested interest as an important planning objective.
+- When verified attractions are available for different requested
+  interests, aim to represent each interest across the trip.
+- Do not replace a distinctive adventure experience with a generic
+  sightseeing activity merely to fill the itinerary.
+- Avoid days containing only one short activity when reaching that
+  activity requires substantial round-trip travel.
+- Prefer combining geographically compatible attractions into a
+  meaningful day, provided their durations and booking requirements
+  make the combination realistic.
+- A full-day experience can reasonably occupy an entire day.
+- Do not add distant, repetitive, or unsuitable attractions simply
+  to increase the number of activities.
+- When there are too few suitable verified attractions, prioritize
+  a realistic itinerary over artificially filling every day.
 - Do not schedule multiple elephant sanctuary visits unless explicitly requested.
 - Do not schedule two full-day or long guided tours on the same day.
 - Prefer 1-2 substantial activities per day for a relaxed pace.
@@ -633,7 +776,9 @@ async def evaluate_trip_candidate(
             origin_longitude=origin[1],
         )
 
-        return find_total_driving_issues(trip)
+        return find_total_driving_issues(trip) + find_daily_time_issues(
+            trip, preferences.pace
+        )
 
     return []
 

@@ -1,16 +1,16 @@
 import asyncio
 import json
+import time
 
 from pydantic import ValidationError
 
 from app.llm import generate_text
 from app.schemas import AttractionRecommendation, AttractionRecommendations
 from app.search import search_attractions
-from app.deduplication import deduplicate_attractions
+from app.deduplication import deduplicate_attractions, deduplicate_verified_attractions
 from app.verification import verify_recommendations
 from app.attraction_locations import validate_attraction_locations
 from app.duration_enrichment import enrich_attraction_durations
-from app.experience_enrichment import enrich_attraction_experiences
 
 
 def merge_recommendation_results(
@@ -154,72 +154,13 @@ def select_diverse_attractions(
     return selected
 
 
-async def recommend_attractions(
-    query: str | list[str],
-    destination: str | None = None,
-    max_attractions: int = 15,
-) -> dict:
-    """Find and validate attraction recommendations for each search query."""
-    queries = [query] if isinstance(query, str) else query
-
-    if not queries:
-        raise ValueError("At least one search query is required.")
-
-    if max_attractions < 1:
-        raise ValueError("max_attractions must be positive.")
-
-    candidate_budget = max_attractions * 2
-
-    per_query_limit = get_per_query_candidate_limit(
-        max_attractions,
-        len(queries),
-    )
-
-    search_responses = await asyncio.gather(
-        *[asyncio.to_thread(search_attractions, item) for item in queries]
-    )
-
-    sources = []
-    seen_urls = set()
-    recommendations = []
-    seen_names = set()
-
-    for search_query, response in zip(queries, search_responses):
-        query_sources = []
-
-        for result in response.get("results", []):
-            url = result.get("url")
-
-            if not url:
-                continue
-
-            if url not in seen_urls:
-                seen_urls.add(url)
-                sources.append(
-                    {
-                        "title": result["title"],
-                        "url": url,
-                        "content": result["content"],
-                    }
-                )
-
-            source_index = next(
-                i for i, source in enumerate(sources, start=1) if source["url"] == url
-            )
-
-            query_sources.append((source_index, result))
-
-        if not query_sources:
-            continue
-
-        source_text = "\n\n".join(
-            f"[{index}] {result['title']}\n"
-            f"URL: {result['url']}\n"
-            f"Content: {result['content']}"
-            for index, result in query_sources
-        )
-
-        prompt = f"""
+def build_recommendation_prompt(
+    search_query: str,
+    source_text: str,
+    per_query_limit: int,
+) -> str:
+    """Build the source-grounded attraction extraction prompt."""
+    return f"""
 You are a travel planning assistant.
 
 User request: {search_query}
@@ -303,8 +244,33 @@ Requirements:
 - Do not assume booking type from activity_type alone.
 """
 
-        valid_indices = {index for index, _ in query_sources}
 
+async def extract_query_recommendations(
+    search_query: str,
+    query_sources: list[tuple[int, dict]],
+    per_query_limit: int,
+    semaphore: asyncio.Semaphore,
+) -> list[AttractionRecommendation]:
+    """Extract recommendations from one query using bounded LLM concurrency."""
+    if not query_sources:
+        return []
+
+    source_text = "\n\n".join(
+        f"[{index}] {result['title']}\n"
+        f"URL: {result['url']}\n"
+        f"Content: {result['content']}"
+        for index, result in query_sources
+    )
+
+    prompt = build_recommendation_prompt(
+        search_query,
+        source_text,
+        per_query_limit,
+    )
+
+    valid_indices = {index for index, _ in query_sources}
+
+    async with semaphore:
         for attempt in range(2):
             response_text = await generate_text(prompt)
 
@@ -322,6 +288,7 @@ Requirements:
                     raise ValueError("Recommendations must be a list.")
 
                 valid_recommendations = []
+                local_seen_names = set()
 
                 for item in raw_recommendations:
                     try:
@@ -337,21 +304,17 @@ Requirements:
 
                     name = recommendation.name.strip().casefold()
 
-                    if name in seen_names:
+                    if name in local_seen_names:
                         continue
 
+                    local_seen_names.add(name)
                     valid_recommendations.append(recommendation)
 
                     if len(valid_recommendations) == per_query_limit:
                         break
 
                 if valid_recommendations:
-                    for recommendation in valid_recommendations:
-                        name = recommendation.name.strip().casefold()
-                        seen_names.add(name)
-                        recommendations.append(recommendation)
-
-                    break
+                    return valid_recommendations
 
                 raise ValueError("No valid recommendations were returned.")
 
@@ -377,8 +340,119 @@ Available source indices: {sorted(valid_indices)}
 Return valid JSON using only these source indices.
 """
 
+    return []
+
+
+async def recommend_attractions(
+    query: str | list[str],
+    destination: str | None = None,
+    max_attractions: int = 15,
+) -> dict:
+    """Find and validate attraction recommendations for each search query."""
+    queries = [query] if isinstance(query, str) else query
+
+    if not queries:
+        raise ValueError("At least one search query is required.")
+
+    if max_attractions < 1:
+        raise ValueError("max_attractions must be positive.")
+
+    per_query_limit = get_per_query_candidate_limit(
+        max_attractions,
+        len(queries),
+    )
+
+    search_started_at = time.perf_counter()
+
+    search_responses = await asyncio.gather(
+        *[asyncio.to_thread(search_attractions, item) for item in queries]
+    )
+
+    for query, response in zip(queries, search_responses):
+        results = response.get("results", [])
+
+        print(
+            "SEARCH DIAGNOSTIC | "
+            f"query={query!r} | "
+            f"result_count={len(results)} | "
+            f"response_keys={list(response.keys())}",
+            flush=True,
+        )
+
+    print(
+        f"PERFORMANCE | search | "
+        f"{time.perf_counter() - search_started_at:.2f} seconds",
+        flush=True,
+    )
+
+    extraction_started_at = time.perf_counter()
+
+    sources = []
+    source_index_by_url = {}
+    query_source_groups = []
+
+    for response in search_responses:
+        query_sources = []
+
+        for result in response.get("results", []):
+            url = result.get("url")
+
+            if not url:
+                continue
+
+            if url not in source_index_by_url:
+                sources.append(
+                    {
+                        "title": result["title"],
+                        "url": url,
+                        "content": result["content"],
+                    }
+                )
+                source_index_by_url[url] = len(sources)
+
+            source_index = source_index_by_url[url]
+            query_sources.append((source_index, result))
+
+        query_source_groups.append(query_sources)
+
+    semaphore = asyncio.Semaphore(3)
+
+    extraction_results = await asyncio.gather(
+        *(
+            extract_query_recommendations(
+                search_query,
+                query_sources,
+                per_query_limit,
+                semaphore,
+            )
+            for search_query, query_sources in zip(
+                queries,
+                query_source_groups,
+            )
+        )
+    )
+
+    recommendations = []
+    seen_names = set()
+
+    for query_recommendations in extraction_results:
+        for recommendation in query_recommendations:
+            name = recommendation.name.strip().casefold()
+
+            if name in seen_names:
+                continue
+
+            seen_names.add(name)
+            recommendations.append(recommendation)
+
     if sources and not recommendations:
         raise ValueError("The model returned no valid recommendations after retry.")
+
+    print(
+        f"PERFORMANCE | extraction | "
+        f"{time.perf_counter() - extraction_started_at:.2f} seconds",
+        flush=True,
+    )
 
     print(
         f"Total valid recommendations: {len(recommendations)}",
@@ -392,10 +466,18 @@ Return valid JSON using only these source indices.
         flush=True,
     )
 
+    verification_started_at = time.perf_counter()
+
     recommendations = await verify_recommendations(
         recommendations,
         sources,
         destination,
+    )
+
+    print(
+        f"PERFORMANCE | source_verification | "
+        f"{time.perf_counter() - verification_started_at:.2f} seconds",
+        flush=True,
     )
 
     print(
@@ -404,9 +486,19 @@ Return valid JSON using only these source indices.
     )
 
     if destination:
+        location_started_at = time.perf_counter()
+
         recommendations = await validate_attraction_locations(
             recommendations,
             destination,
+        )
+
+        recommendations = deduplicate_verified_attractions(recommendations)
+
+        print(
+            f"PERFORMANCE | location_validation | "
+            f"{time.perf_counter() - location_started_at:.2f} seconds",
+            flush=True,
         )
 
         print(
@@ -420,9 +512,17 @@ Return valid JSON using only these source indices.
             flush=True,
         )
 
+        duration_started_at = time.perf_counter()
+
         enriched = await enrich_attraction_durations(
             [recommendation.model_dump() for recommendation in recommendations],
             destination,
+        )
+
+        print(
+            f"PERFORMANCE | duration_enrichment | "
+            f"{time.perf_counter() - duration_started_at:.2f} seconds",
+            flush=True,
         )
 
         for attraction in enriched:
@@ -435,11 +535,6 @@ Return valid JSON using only these source indices.
                 attraction.get("duration_minutes"),
                 flush=True,
             )
-
-        enriched = await enrich_attraction_experiences(
-            enriched,
-            destination,
-        )
 
         recommendations = [
             AttractionRecommendation.model_validate(item) for item in enriched

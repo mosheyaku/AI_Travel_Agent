@@ -1596,3 +1596,235 @@ async def test_enrich_rejects_excessive_total_driving(monkeypatch):
 
     assert len(enriched.days[0].activities) == 1
     assert enriched.days[0].activities[0].name == "Waterfall"
+
+
+def test_daily_time_allows_valid_day():
+    trip = TravelItinerary.model_validate(
+        {
+            "destination": "Chiang Mai",
+            "days": [
+                {
+                    "day": 1,
+                    "total_driving_duration_minutes": 120,
+                    "activities": [
+                        {
+                            "name": "Zipline",
+                            "activity_type": "zipline",
+                            "description": "Jungle ziplining.",
+                            "source_indices": [1],
+                            "duration_type": "half_day",
+                            "duration_minutes": 240,
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    issues = trip_generator.find_daily_time_issues(trip, "balanced")
+
+    assert issues == []
+
+
+def test_daily_time_rejects_excessive_day():
+    trip = TravelItinerary.model_validate(
+        {
+            "destination": "Chiang Mai",
+            "days": [
+                {
+                    "day": 1,
+                    "total_driving_duration_minutes": 120,
+                    "activities": [
+                        {
+                            "name": "Adventure Tour",
+                            "activity_type": "adventure",
+                            "description": "A long adventure experience.",
+                            "source_indices": [1],
+                            "duration_type": "half_day",
+                            "duration_minutes": 390,
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    issues = trip_generator.find_daily_time_issues(trip, "balanced")
+
+    assert len(issues) == 1
+    assert "510 minutes" in issues[0]
+    assert "480 minutes" in issues[0]
+
+
+@pytest.mark.anyio
+async def test_enrich_rejects_excessive_daily_time(monkeypatch):
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=1,
+        interests=["adventure"],
+        pace="balanced",
+    )
+
+    recommendations = [
+        verified_attraction(
+            "Adventure Park",
+            1,
+            activity_type="adventure",
+            duration_type="half_day",
+            duration_minutes=300,
+        ),
+        verified_attraction(
+            "Zipline",
+            2,
+            activity_type="zipline",
+            duration_type="short",
+            duration_minutes=120,
+        ),
+    ]
+
+    trip = TravelItinerary.model_validate(
+        {
+            "destination": "Chiang Mai, Thailand",
+            "days": [
+                {
+                    "day": 1,
+                    "activities": [
+                        {
+                            "name": "Adventure Park",
+                            "activity_type": "adventure",
+                            "description": "Adventure activities.",
+                            "source_indices": [1],
+                            "duration_type": "half_day",
+                            "duration_minutes": 300,
+                            "location_status": LocationStatus.VERIFIED,
+                            "latitude": 18.7,
+                            "longitude": 98.9,
+                            "google_place_id": "test-place-1",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    async def fake_add_driving_routes(candidate):
+        candidate.days[0].driving_status = "verified"
+        candidate.days[0].driving_duration_minutes = 15
+        return candidate
+
+    async def fake_resolve_trip_origin(_preferences):
+        return (18.7883, 98.9853)
+
+    async def fake_add_total_driving_routes(
+        candidate,
+        origin_latitude,
+        origin_longitude,
+    ):
+        candidate.days[0].total_driving_duration_minutes = 120
+        return candidate
+
+    monkeypatch.setattr(
+        trip_generator,
+        "add_driving_routes",
+        fake_add_driving_routes,
+    )
+    monkeypatch.setattr(
+        trip_generator,
+        "resolve_trip_origin",
+        fake_resolve_trip_origin,
+    )
+    monkeypatch.setattr(
+        trip_generator,
+        "add_total_driving_routes",
+        fake_add_total_driving_routes,
+    )
+
+    enriched = await trip_generator.enrich_trip_plan(
+        trip,
+        preferences,
+        recommendations,
+    )
+
+    assert [activity.name for activity in enriched.days[0].activities] == [
+        "Adventure Park"
+    ]
+
+
+@pytest.mark.anyio
+async def test_repair_rejects_excessive_daily_time(monkeypatch):
+    preferences = TravelPreferences(
+        destination="Chiang Mai, Thailand",
+        duration_days=1,
+        interests=["adventure"],
+        pace="balanced",
+    )
+
+    recommendations = [
+        verified_attraction(
+            "Adventure Tour",
+            1,
+            activity_type="adventure",
+            description="A long adventure experience.",
+            duration_type="half_day",
+            duration_minutes=360,
+        ),
+    ]
+
+    trip = TravelItinerary.model_validate(
+        {
+            "destination": "Chiang Mai, Thailand",
+            "days": [
+                {
+                    "day": 1,
+                    "activities": [
+                        {
+                            "name": "Adventure Tour",
+                            "activity_type": "adventure",
+                            "description": "A long adventure experience.",
+                            "source_indices": [1],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    async def fake_resolve_trip_origin(_preferences):
+        return (18.7883, 98.9853)
+
+    async def fake_add_driving_routes(candidate, cache=None):
+        return candidate
+
+    async def fake_add_total_driving_routes(
+        candidate,
+        origin_latitude,
+        origin_longitude,
+        cache=None,
+    ):
+        for day in candidate.days:
+            day.total_driving_duration_minutes = 150 if day.activities else None
+        return candidate
+
+    monkeypatch.setattr(
+        trip_generator,
+        "resolve_trip_origin",
+        fake_resolve_trip_origin,
+    )
+    monkeypatch.setattr(
+        trip_generator,
+        "add_driving_routes",
+        fake_add_driving_routes,
+    )
+    monkeypatch.setattr(
+        trip_generator,
+        "add_total_driving_routes",
+        fake_add_total_driving_routes,
+    )
+
+    repaired = await trip_generator.repair_trip_plan(
+        trip,
+        preferences,
+        recommendations,
+    )
+
+    assert repaired is None or repaired.days[0].activities == []

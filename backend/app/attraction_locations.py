@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 
 from app.geocoding import LocationCandidate, search_locations
@@ -21,6 +23,7 @@ async def validate_attraction_locations(
     recommendations: list[AttractionRecommendation],
     destination: str,
 ) -> list[AttractionRecommendation]:
+    """Validate attraction locations concurrently with bounded concurrency."""
     try:
         destination_candidates = await search_locations(destination, "")
     except (httpx.HTTPError, TimeoutError):
@@ -34,73 +37,78 @@ async def validate_attraction_locations(
     if destination_location is None:
         return recommendations
 
-    validated_recommendations = []
+    semaphore = asyncio.Semaphore(5)
 
-    for recommendation in recommendations:
-        search_names = extract_search_names(recommendation.name)
-        all_places_by_id = {}
+    async def validate_one(
+        recommendation: AttractionRecommendation,
+    ) -> AttractionRecommendation | None:
+        async with semaphore:
+            search_names = extract_search_names(recommendation.name)
+            all_places_by_id = {}
 
-        for search_name in search_names:
-            try:
-                places = await search_google_places(
-                    search_name,
-                    destination,
-                )
-            except (httpx.HTTPError, TimeoutError):
-                continue
-
-            for place in places:
-                if is_likely_office(place.types):
+            for search_name in search_names:
+                try:
+                    places = await search_google_places(
+                        search_name,
+                        destination,
+                    )
+                except (httpx.HTTPError, TimeoutError):
                     continue
 
-                all_places_by_id[place.place_id] = place
+                for place in places:
+                    if is_likely_office(place.types):
+                        continue
 
-        all_places = list(all_places_by_id.values())
+                    all_places_by_id[place.place_id] = place
 
-        matching_places = [
-            place
-            for place in all_places
-            if any(
-                names_match_or_alias(candidate_name, place.name)
-                for candidate_name in search_names
+            all_places = list(all_places_by_id.values())
+
+            matching_places = [
+                place
+                for place in all_places
+                if any(
+                    names_match_or_alias(candidate_name, place.name)
+                    for candidate_name in search_names
+                )
+            ]
+
+            if (
+                len(matching_places) == 1
+                and recommendation.booking_type != "guided_tour"
+            ):
+                place = matching_places[0]
+            elif all_places:
+                place = await match_place_with_llm(
+                    recommendation.name,
+                    destination,
+                    all_places,
+                    description=recommendation.description,
+                    booking_type=recommendation.booking_type,
+                )
+            else:
+                place = None
+
+            if place is None:
+                return recommendation
+
+            distance = calculate_distance_km(
+                destination_location.latitude,
+                destination_location.longitude,
+                place.latitude,
+                place.longitude,
             )
-        ]
 
-        if len(matching_places) == 1:
-            place = matching_places[0]
-        elif all_places:
-            place = await match_place_with_llm(
+            if distance > 150:
+                return None
+
+            if is_suspicious_activity_location(
                 recommendation.name,
-                destination,
-                all_places,
-            )
-        else:
-            place = None
+                recommendation.category,
+                distance,
+            ):
+                return recommendation
 
-        if place is None:
-            validated_recommendations.append(recommendation)
-            continue
-
-        distance = calculate_distance_km(
-            destination_location.latitude,
-            destination_location.longitude,
-            place.latitude,
-            place.longitude,
-        )
-
-        if distance > 150:
-            continue
-
-        if is_suspicious_activity_location(
-            recommendation.name,
-            recommendation.category,
-            distance,
-        ):
-            validated_recommendations.append(recommendation)
-            continue
-
-        validated_recommendations.append(
-            recommendation.model_copy(
+            return recommendation.model_copy(
                 update={
                     "location_status": LocationStatus.VERIFIED,
                     "latitude": place.latitude,
@@ -109,24 +117,27 @@ async def validate_attraction_locations(
                     "google_place_id": place.place_id,
                 }
             )
-        )
 
-    return validated_recommendations
+    results = await asyncio.gather(
+        *(validate_one(recommendation) for recommendation in recommendations)
+    )
+
+    return [result for result in results if result is not None]
 
 
 def find_destination(
     destination: str,
     candidates: list[LocationCandidate],
 ) -> LocationCandidate | None:
+    """Find an unambiguous destination location."""
     expected = normalize_name(destination.split(",")[0])
 
     matches = [
         candidate
         for candidate in candidates
         if normalize_name(candidate.name.split(",")[0]) == expected
-        or normalize_name(candidate.name.split(",")[0]) == (
-            f"{expected} city municipality"
-        )
+        or normalize_name(candidate.name.split(",")[0])
+        == (f"{expected} city municipality")
     ]
 
     if len(matches) != 1:

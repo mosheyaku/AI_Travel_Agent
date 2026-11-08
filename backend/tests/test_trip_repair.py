@@ -27,14 +27,12 @@ def make_preferences(days):
     )
 
 
-async def fake_valid_routes(trip):
-    for day in trip.days:
-        day.driving_duration_minutes = (
-            10 if len(day.activities) > 1 else None
-        )
+async def fake_valid_routes(candidate, cache=None):
+    for day in candidate.days:
+        day.driving_duration_minutes = 10 if len(day.activities) > 1 else None
         day.driving_status = "verified"
 
-    return trip
+    return candidate
 
 
 @pytest.mark.anyio
@@ -45,32 +43,24 @@ async def test_repair_moves_activity_without_dropping_it(monkeypatch):
         make_activity("C", 3),
     ]
 
-    trip = TravelItinerary.model_validate({
-        "destination": "Chiang Mai",
-        "days": [
-            {"day": 1, "activities": recommendations[:2]},
-            {"day": 2, "activities": recommendations[2:]},
-        ],
-    })
+    trip = TravelItinerary.model_validate(
+        {
+            "destination": "Chiang Mai",
+            "days": [
+                {"day": 1, "activities": recommendations[:2]},
+                {"day": 2, "activities": recommendations[2:]},
+            ],
+        }
+    )
 
-    async def fake_routes(candidate):
+    async def fake_routes(candidate, cache=None):
         for day in candidate.days:
             names = [activity.name for activity in day.activities]
 
-            minutes = (
-                139
-                if names in (["A", "B"], ["B", "A"])
-                else 10
-            )
+            minutes = 139 if names in (["A", "B"], ["B", "A"]) else 10
 
-            day.driving_duration_minutes = (
-                minutes if len(names) > 1 else None
-            )
-            day.driving_status = (
-                "exceeds_limit"
-                if minutes > 90
-                else "verified"
-            )
+            day.driving_duration_minutes = minutes if len(names) > 1 else None
+            day.driving_status = "exceeds_limit" if minutes > 90 else "verified"
 
         return candidate
 
@@ -92,9 +82,7 @@ async def test_repair_moves_activity_without_dropping_it(monkeypatch):
     assert len(repaired.days) == 2
 
     assert sorted(
-        activity.name
-        for day in repaired.days
-        for activity in day.activities
+        activity.name for day in repaired.days for activity in day.activities
     ) == ["A", "B", "C"]
 
     assert not trip_generator.find_driving_issues(repaired)
@@ -107,13 +95,15 @@ async def test_repair_separates_full_day_activity(monkeypatch):
         make_activity("Botanical Garden", 2, "short"),
     ]
 
-    trip = TravelItinerary.model_validate({
-        "destination": "Chiang Mai",
-        "days": [
-            {"day": 1, "activities": recommendations},
-            {"day": 2, "activities": []},
-        ],
-    })
+    trip = TravelItinerary.model_validate(
+        {
+            "destination": "Chiang Mai",
+            "days": [
+                {"day": 1, "activities": recommendations},
+                {"day": 2, "activities": []},
+            ],
+        }
+    )
 
     monkeypatch.setattr(
         trip_generator,
@@ -132,9 +122,7 @@ async def test_repair_separates_full_day_activity(monkeypatch):
     assert not trip_generator.find_activity_load_issues(repaired)
 
     assert sorted(
-        activity.name
-        for day in repaired.days
-        for activity in day.activities
+        activity.name for day in repaired.days for activity in day.activities
     ) == ["Botanical Garden", "National Park"]
 
     assert all(len(day.activities) == 1 for day in repaired.days)
@@ -147,14 +135,16 @@ async def test_repair_does_not_accept_unknown_routes(monkeypatch):
         make_activity("B", 2),
     ]
 
-    trip = TravelItinerary.model_validate({
-        "destination": "Chiang Mai",
-        "days": [
-            {"day": 1, "activities": recommendations},
-        ],
-    })
+    trip = TravelItinerary.model_validate(
+        {
+            "destination": "Chiang Mai",
+            "days": [
+                {"day": 1, "activities": recommendations},
+            ],
+        }
+    )
 
-    async def unknown_routes(candidate):
+    async def unknown_routes(candidate, cache=None):
         for day in candidate.days:
             day.driving_status = "unknown"
 

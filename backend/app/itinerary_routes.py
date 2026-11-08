@@ -5,6 +5,48 @@ from app.location_validation import LocationStatus
 from app.schemas import ItineraryActivity, TravelItinerary
 
 MAX_DAILY_DRIVING_MINUTES = 90
+MAX_TOTAL_DAILY_DRIVING_MINUTES = 180
+
+
+class DrivingRouteCache:
+    """Cache successful directed driving routes for one planning operation."""
+
+    def __init__(self) -> None:
+        self.routes = {}
+        self.hits = 0
+        self.misses = 0
+
+    async def get_route(
+        self,
+        origin_latitude: float,
+        origin_longitude: float,
+        destination_latitude: float,
+        destination_longitude: float,
+    ):
+        key = (
+            origin_latitude,
+            origin_longitude,
+            destination_latitude,
+            destination_longitude,
+        )
+
+        if key in self.routes:
+            self.hits += 1
+            return self.routes[key]
+
+        self.misses += 1
+
+        route = await get_driving_route(
+            origin_latitude,
+            origin_longitude,
+            destination_latitude,
+            destination_longitude,
+        )
+
+        if route is not None:
+            self.routes[key] = route
+
+        return route
 
 
 def has_verified_location(activity: ItineraryActivity) -> bool:
@@ -17,13 +59,40 @@ def has_verified_location(activity: ItineraryActivity) -> bool:
     )
 
 
-async def add_driving_routes(trip: TravelItinerary) -> TravelItinerary:
-    """Add driving totals between consecutive activities in each day."""
+async def fetch_route(
+    origin_latitude: float,
+    origin_longitude: float,
+    destination_latitude: float,
+    destination_longitude: float,
+    cache: DrivingRouteCache | None,
+):
+    """Fetch a route directly or through a request-scoped cache."""
+    if cache is not None:
+        return await cache.get_route(
+            origin_latitude,
+            origin_longitude,
+            destination_latitude,
+            destination_longitude,
+        )
 
+    return await get_driving_route(
+        origin_latitude,
+        origin_longitude,
+        destination_latitude,
+        destination_longitude,
+    )
+
+
+async def add_driving_routes(
+    trip: TravelItinerary,
+    cache: DrivingRouteCache | None = None,
+) -> TravelItinerary:
+    """Add driving totals between consecutive activities in each day."""
     for day in trip.days:
         day.driving_distance_km = None
         day.driving_duration_minutes = None
         day.driving_status = "unknown"
+
         if len(day.activities) < 2:
             continue
 
@@ -42,11 +111,12 @@ async def add_driving_routes(trip: TravelItinerary) -> TravelItinerary:
                 break
 
             try:
-                route = await get_driving_route(
+                route = await fetch_route(
                     origin.latitude,
                     origin.longitude,
                     destination.latitude,
                     destination.longitude,
+                    cache,
                 )
             except (httpx.HTTPError, ValueError, KeyError, TypeError):
                 all_routes_available = False
@@ -67,8 +137,7 @@ async def add_driving_routes(trip: TravelItinerary) -> TravelItinerary:
                 day.driving_status = "exceeds_limit"
             else:
                 day.driving_status = "verified"
-        else:
-            day.driving_status = "unknown"
+
     return trip
 
 
@@ -90,9 +159,6 @@ def find_driving_issues(
             )
 
     return issues
-
-
-MAX_TOTAL_DAILY_DRIVING_MINUTES = 180
 
 
 def find_total_driving_issues(
@@ -119,12 +185,13 @@ async def add_total_driving_routes(
     trip: TravelItinerary,
     origin_latitude: float,
     origin_longitude: float,
+    cache: DrivingRouteCache | None = None,
 ) -> TravelItinerary:
-    """Calculate daily round-trip driving from an estimated city center."""
-
+    """Calculate daily round-trip driving from the trip origin."""
     for day in trip.days:
         day.total_driving_distance_km = None
         day.total_driving_duration_minutes = None
+
         if not day.activities:
             continue
 
@@ -142,11 +209,12 @@ async def add_total_driving_routes(
 
         for origin, destination in zip(points, points[1:]):
             try:
-                route = await get_driving_route(
+                route = await fetch_route(
                     origin[0],
                     origin[1],
                     destination[0],
                     destination[1],
+                    cache,
                 )
             except (httpx.HTTPError, ValueError, KeyError, TypeError):
                 break

@@ -28,6 +28,7 @@ def make_recommendation(name, category="nature", activity_type="hiking"):
         source_indices=[1],
     )
 
+
 @pytest.mark.anyio
 async def test_filters_distant_attraction(monkeypatch):
     recommendation = make_recommendation("Bangkok Park")
@@ -121,9 +122,7 @@ async def test_keeps_recommendation_when_geocoding_fails(monkeypatch):
         raise httpx.ConnectError("Geocoding service unavailable")
 
     async def fake_search_google_places(name, destination):
-        pytest.fail(
-            "Google Places should not be called when destination lookup fails."
-        )
+        pytest.fail("Google Places should not be called when destination lookup fails.")
 
     monkeypatch.setattr(
         attraction_locations,
@@ -298,10 +297,16 @@ async def test_rejects_different_google_place_name(monkeypatch):
         attraction_name,
         destination,
         places,
+        description="",
+        booking_type="unknown",
     ):
         return None
-        
-    monkeypatch.setattr(attraction_locations,"match_place_with_llm",fake_match_place_with_llm,)
+
+    monkeypatch.setattr(
+        attraction_locations,
+        "match_place_with_llm",
+        fake_match_place_with_llm,
+    )
 
     result = await attraction_locations.validate_attraction_locations(
         [recommendation],
@@ -317,9 +322,7 @@ async def test_rejects_different_google_place_name(monkeypatch):
 
 @pytest.mark.anyio
 async def test_verifies_attraction_using_alternative_name(monkeypatch):
-    recommendation = make_recommendation(
-        "Sticky Waterfall (Bua Thong Waterfall)"
-    )
+    recommendation = make_recommendation("Sticky Waterfall (Bua Thong Waterfall)")
 
     async def fake_search_locations(name, destination):
         return [
@@ -379,12 +382,9 @@ async def test_verifies_attraction_using_alternative_name(monkeypatch):
     assert result[0].distance_km is not None
 
 
-
 @pytest.mark.anyio
 async def test_searches_all_alternative_names(monkeypatch):
-    recommendation = make_recommendation(
-        "Sticky Waterfall (Bua Thong Waterfall)"
-    )
+    recommendation = make_recommendation("Sticky Waterfall (Bua Thong Waterfall)")
 
     async def fake_search_locations(name, destination):
         return [
@@ -426,10 +426,12 @@ async def test_searches_all_alternative_names(monkeypatch):
         "Chiang Mai, Thailand",
     )
 
-    assert searched_names == ["Sticky Waterfall", "Bua Thong Waterfall",]
+    assert searched_names == [
+        "Sticky Waterfall",
+        "Bua Thong Waterfall",
+    ]
     assert len(result) == 1
     assert result[0].location_status == LocationStatus.VERIFIED
-
 
 
 @pytest.mark.anyio
@@ -540,3 +542,75 @@ async def test_matches_alternative_name_from_google_results(monkeypatch):
     assert len(result) == 1
     assert result[0].location_status == LocationStatus.VERIFIED
     assert result[0].google_place_id == "sticky-waterfall-id"
+
+
+@pytest.mark.anyio
+async def test_guided_tour_does_not_automatically_match_park(monkeypatch):
+    recommendation = make_recommendation(
+        "Doi Inthanon Guided Tour",
+        category="nature",
+    ).model_copy(
+        update={
+            "booking_type": "guided_tour",
+            "description": (
+                "A guided tour visiting several locations "
+                "inside Doi Inthanon National Park."
+            ),
+        }
+    )
+
+    async def fake_search_locations(name, destination):
+        return [
+            make_location(
+                "Chiang Mai City Municipality, Thailand",
+                18.7883,
+                98.9853,
+            )
+        ]
+
+    async def fake_search_google_places(name, destination):
+        return [
+            GooglePlace(
+                place_id="doi-tour",
+                name="Doi Inthanon Guided Tour",
+                latitude=18.588,
+                longitude=98.487,
+                types=["tourist_attraction"],
+            )
+        ]
+
+    async def fake_match_place_with_llm(
+        attraction_name,
+        destination,
+        places,
+        description="",
+        booking_type="unknown",
+    ):
+        assert booking_type == "guided_tour"
+        assert "several locations" in description
+        return None
+
+    monkeypatch.setattr(
+        attraction_locations,
+        "search_locations",
+        fake_search_locations,
+    )
+    monkeypatch.setattr(
+        attraction_locations,
+        "search_google_places",
+        fake_search_google_places,
+    )
+    monkeypatch.setattr(
+        attraction_locations,
+        "match_place_with_llm",
+        fake_match_place_with_llm,
+    )
+
+    result = await attraction_locations.validate_attraction_locations(
+        [recommendation],
+        "Chiang Mai, Thailand",
+    )
+
+    assert len(result) == 1
+    assert result[0].location_status == LocationStatus.UNVERIFIED
+    assert result[0].google_place_id is None
