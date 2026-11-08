@@ -95,3 +95,38 @@ async def test_rejects_generic_rafting_provider(monkeypatch):
     )
 
     assert result is None
+
+
+@pytest.mark.anyio
+async def test_guided_tour_matching_requires_departure_evidence(monkeypatch):
+    places = [
+        GooglePlace(
+            place_id="park",
+            name="Doi Inthanon National Park",
+            latitude=18.588,
+            longitude=98.487,
+            types=["national_park"],
+        )
+    ]
+
+    async def fake_generate_text(prompt):
+        assert "Booking type: guided_tour" in prompt
+        assert "several locations" in prompt
+        assert "Do not treat one tour stop as the meeting point" in prompt
+        return json.dumps({"place_id": None})
+
+    monkeypatch.setattr(
+        llm_place_matching,
+        "generate_text",
+        fake_generate_text,
+    )
+
+    result = await llm_place_matching.match_place_with_llm(
+        "Doi Inthanon Guided Tour",
+        "Chiang Mai, Thailand",
+        places,
+        description="A guided tour visiting several locations.",
+        booking_type="guided_tour",
+    )
+
+    assert result is None

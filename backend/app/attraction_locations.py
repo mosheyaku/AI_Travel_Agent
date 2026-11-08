@@ -72,13 +72,18 @@ async def validate_attraction_locations(
                 )
             ]
 
-            if len(matching_places) == 1:
+            if (
+                len(matching_places) == 1
+                and recommendation.booking_type != "guided_tour"
+            ):
                 place = matching_places[0]
             elif all_places:
                 place = await match_place_with_llm(
                     recommendation.name,
                     destination,
                     all_places,
+                    description=recommendation.description,
+                    booking_type=recommendation.booking_type,
                 )
             else:
                 place = None

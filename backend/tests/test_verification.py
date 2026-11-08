@@ -493,3 +493,101 @@ def test_validates_factual_evidence():
         ],
         sources,
     )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("is_verified", "expected_count"),
+    [
+        (True, 1),
+        (False, 0),
+    ],
+)
+async def test_verifies_identifiable_multi_stop_tour(
+    monkeypatch,
+    is_verified,
+    expected_count,
+):
+    tour_name = "Northern Trails Guided Adventure"
+
+    recommendation = AttractionRecommendation(
+        name=tour_name,
+        category="adventure",
+        activity_type="guided_hiking",
+        description="A guided tour visiting multiple locations.",
+        relevance_reason="Matches adventure interests.",
+        source_indices=[1],
+        booking_type="guided_tour",
+    )
+
+    source_content = (
+        "Northern Trails Guided Adventure is operated by "
+        "Northern Trails Company. The guided tour visits "
+        "a forest trail and a waterfall."
+    )
+
+    sources = [
+        {
+            "title": "Northern Trails Guided Adventure",
+            "content": source_content,
+        }
+    ]
+
+    prompts = []
+
+    async def fake_generate_text(prompt: str) -> str:
+        prompts.append(prompt)
+
+        if prompt.lstrip().startswith("Identify which sources"):
+            return json.dumps({"source_indices": [1]})
+
+        assert "A bookable guided tour" in prompt
+        assert "exact named tour and its provider" in prompt
+        assert "Do not invent a tour package" in prompt
+
+        if not is_verified:
+            return json.dumps({"verified": False})
+
+        return json.dumps(
+            {
+                "verified": True,
+                "description": (
+                    "A guided tour operated by Northern Trails Company "
+                    "visiting a forest trail and a waterfall."
+                ),
+                "activity_type": "guided_hiking",
+                "duration_type": "unknown",
+                "booking_type": "guided_tour",
+                "evidence": [
+                    {
+                        "claim": (
+                            "The tour is operated by Northern Trails Company "
+                            "and visits a forest trail and a waterfall."
+                        ),
+                        "source_index": 1,
+                        "quote": source_content,
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr(
+        verification,
+        "generate_text",
+        fake_generate_text,
+    )
+
+    result = await verification.verify_recommendations(
+        [recommendation],
+        sources,
+        destination="Chiang Mai, Thailand",
+    )
+
+    assert len(prompts) == 2
+    assert len(result) == expected_count
+
+    if is_verified:
+        assert result[0].name == tour_name
+        assert result[0].booking_type == "guided_tour"
+        assert result[0].activity_type == "guided_hiking"
+        assert result[0].source_indices == [1]

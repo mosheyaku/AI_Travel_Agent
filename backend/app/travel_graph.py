@@ -625,6 +625,7 @@ builder.add_conditional_edges(
 
 builder.add_edge("feedback", "generate")
 builder.add_edge("repair", "optimize")
-builder.add_edge("optimize", END)
+builder.add_edge("optimize", "schedule")
+builder.add_edge("schedule", END)
 
 travel_graph = builder.compile()

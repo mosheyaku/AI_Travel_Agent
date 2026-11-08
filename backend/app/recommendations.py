@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from app.llm import generate_text
 from app.schemas import AttractionRecommendation, AttractionRecommendations
 from app.search import search_attractions
-from app.deduplication import deduplicate_attractions
+from app.deduplication import deduplicate_attractions, deduplicate_verified_attractions
 from app.verification import verify_recommendations
 from app.attraction_locations import validate_attraction_locations
 from app.duration_enrichment import enrich_attraction_durations
@@ -368,6 +368,17 @@ async def recommend_attractions(
         *[asyncio.to_thread(search_attractions, item) for item in queries]
     )
 
+    for query, response in zip(queries, search_responses):
+        results = response.get("results", [])
+
+        print(
+            "SEARCH DIAGNOSTIC | "
+            f"query={query!r} | "
+            f"result_count={len(results)} | "
+            f"response_keys={list(response.keys())}",
+            flush=True,
+        )
+
     print(
         f"PERFORMANCE | search | "
         f"{time.perf_counter() - search_started_at:.2f} seconds",
@@ -481,6 +492,8 @@ async def recommend_attractions(
             recommendations,
             destination,
         )
+
+        recommendations = deduplicate_verified_attractions(recommendations)
 
         print(
             f"PERFORMANCE | location_validation | "

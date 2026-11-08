@@ -676,6 +676,21 @@ Requirements:
   meaningfully different experiences.
 - Do not add repetitive activities merely to fill the requested daily pace.
 - Prefer fewer meaningful activities over a larger number of repetitive ones.
+- Treat each requested interest as an important planning objective.
+- When verified attractions are available for different requested
+  interests, aim to represent each interest across the trip.
+- Do not replace a distinctive adventure experience with a generic
+  sightseeing activity merely to fill the itinerary.
+- Avoid days containing only one short activity when reaching that
+  activity requires substantial round-trip travel.
+- Prefer combining geographically compatible attractions into a
+  meaningful day, provided their durations and booking requirements
+  make the combination realistic.
+- A full-day experience can reasonably occupy an entire day.
+- Do not add distant, repetitive, or unsuitable attractions simply
+  to increase the number of activities.
+- When there are too few suitable verified attractions, prioritize
+  a realistic itinerary over artificially filling every day.
 - Do not schedule multiple elephant sanctuary visits unless explicitly requested.
 - Do not schedule two full-day or long guided tours on the same day.
 - Prefer 1-2 substantial activities per day for a relaxed pace.

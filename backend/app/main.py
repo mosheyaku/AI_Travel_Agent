@@ -3,7 +3,7 @@ import logging
 from fastapi import FastAPI, Query, HTTPException
 
 from app.config import settings
-from app.search import search_attractions
+from app.search import search_attractions, AttractionSearchError
 from app.recommendations import recommend_attractions
 from app.schemas import TravelPreferences
 from app.trip_planning import build_attraction_queries, get_attraction_search_limit
@@ -110,6 +110,14 @@ async def generate_trip(
             "trip": result["trip"],
             "sources": result["sources"],
         }
+
+    except AttractionSearchError as exc:
+        logger.warning("Attraction search failed: %s", exc)
+
+        raise HTTPException(
+            status_code=503,
+            detail="The attraction search service is temporarily unavailable.",
+        ) from exc
 
     except ValueError as exc:
         logger.warning("Trip planning failed: %s", exc)
