@@ -1,11 +1,11 @@
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-const ALLOWED_ROUTES = new Set([
-  "health",
-  "trips/generate",
-  "places/accommodations",
-]);
+const ALLOWED_ROUTES: Record<string, string> = {
+  "health": "GET",
+  "trips/generate": "POST",
+  "places/accommodations": "GET",
+};
 
 export default async function handler(
   request: VercelRequest,
@@ -20,26 +20,20 @@ export default async function handler(
     return;
   }
 
-  const rawPath = request.query.path;
-  const segments = Array.isArray(rawPath)
-    ? rawPath
-    : rawPath
-      ? [rawPath]
-      : [];
+  const requestUrl = new URL(
+    request.url ?? "/",
+    "https://localhost",
+  );
 
-  const path = segments.join("/");
+  const path = requestUrl.pathname.replace(/^\/api\//, "");
+  const allowedMethod = ALLOWED_ROUTES[path];
 
-  if (!ALLOWED_ROUTES.has(path)) {
+  if (!allowedMethod) {
     response.status(404).json({
       detail: "API route not found.",
     });
     return;
   }
-
-  const allowedMethod =
-    path === "health" || path === "places/accommodations"
-      ? "GET"
-      : "POST";
 
   if (request.method !== allowedMethod) {
     response.setHeader("Allow", allowedMethod);
@@ -49,30 +43,19 @@ export default async function handler(
     return;
   }
 
-  const target = new URL(
+  const targetUrl = new URL(
     `${backendUrl.replace(/\/+$/, "")}/${path}`,
   );
 
-  for (const [key, value] of Object.entries(request.query)) {
-    if (key === "path") continue;
-
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        target.searchParams.append(key, item);
-      }
-    } else if (value !== undefined) {
-      target.searchParams.append(key, value);
-    }
-  }
+  targetUrl.search = requestUrl.search;
 
   try {
-    const upstream = await fetch(target, {
+    const upstream = await fetch(targetUrl, {
       method: allowedMethod,
-      headers: {
-        ...(allowedMethod === "POST"
+      headers:
+        allowedMethod === "POST"
           ? { "Content-Type": "application/json" }
-          : {}),
-      },
+          : {},
       body:
         allowedMethod === "POST"
           ? JSON.stringify(request.body)
@@ -86,9 +69,9 @@ export default async function handler(
       response.setHeader("Content-Type", contentType);
     }
 
-    const body = Buffer.from(await upstream.arrayBuffer());
-
-    response.status(upstream.status).send(body);
+    response
+      .status(upstream.status)
+      .send(Buffer.from(await upstream.arrayBuffer()));
   } catch {
     response.status(502).json({
       detail: "Unable to reach the backend service.",
