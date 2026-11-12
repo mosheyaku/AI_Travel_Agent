@@ -1,0 +1,12 @@
+{
+    "rewrites": [
+      {
+        "source": "/api/trips/generate",
+        "destination": "/api/[...path]?path=trips/generate"
+      },
+      {
+        "source": "/api/places/accommodations",
+        "destination": "/api/[...path]?path=places/accommodations"
+      }
+    ]
+  }
